@@ -14,7 +14,7 @@ class State(rx.State):
     labels: list[dict] = []
     upload_complete: bool = False
 
-    LABEL_OPTIONS: list[str] = ["Usable", "Too Blurry", "Wrong Setup", "Not Allowed"]
+    LABEL_OPTIONS: list[str] = ["Usable", "Too Blurry", "Wrong Setup", "Irrelevant Image"]
 
     @rx.var
     def current_filename(self) -> str:
@@ -106,20 +106,29 @@ class State(rx.State):
 
 
 def label_button(label: str) -> rx.Component:
-    """Create a label button."""
+    """Create a label button with tooltip."""
     colors = {
         "Usable": "green",
         "Too Blurry": "orange",
         "Wrong Setup": "blue",
-        "Not Allowed": "red",
+        "Irrelevant Image": "red",
     }
-    return rx.button(
-        label,
-        size="3",
-        color_scheme=colors.get(label, "gray"),
-        on_click=State.apply_label(label),
-        disabled=~State.has_images,
-        style={"min_width": "140px"},
+    descriptions = {
+        "Usable": "Shows discharge indicating fertility status",
+        "Too Blurry": "Has discharge but too poor quality to assess",
+        "Wrong Setup": "Has discharge but not captured correctly",
+        "Irrelevant Image": "No discharge present",
+    }
+    return rx.tooltip(
+        rx.button(
+            label,
+            size="3",
+            color_scheme=colors.get(label, "gray"),
+            on_click=State.apply_label(label),
+            disabled=~State.has_images,
+            style={"min_width": "140px"},
+        ),
+        content=descriptions.get(label, ""),
     )
 
 
@@ -217,7 +226,7 @@ def labeling_area() -> rx.Component:
             label_button("Usable"),
             label_button("Too Blurry"),
             label_button("Wrong Setup"),
-            label_button("Not Allowed"),
+            label_button("Irrelevant Image"),
             spacing="3",
             wrap="wrap",
             justify="center",
@@ -260,21 +269,28 @@ def labeling_area() -> rx.Component:
 
 def index() -> rx.Component:
     """Main page."""
-    return rx.center(
-        rx.vstack(
-            rx.color_mode.button(position="fixed", top="4", right="4"),
-            rx.heading("Image Labeler", size="7", margin_bottom="4"),
-            rx.cond(
-                State.upload_complete,
-                labeling_area(),
-                upload_area(),
-            ),
-            spacing="4",
-            align="center",
-            padding="8",
-            width="100%",
+    return rx.box(
+        rx.color_mode.button(
+            position="fixed",
+            top="1rem",
+            right="1rem",
+            z_index="1000",
         ),
-        min_height="100vh",
+        rx.center(
+            rx.vstack(
+                rx.heading("Image Labeler", size="7", margin_bottom="4"),
+                rx.cond(
+                    State.upload_complete,
+                    labeling_area(),
+                    upload_area(),
+                ),
+                spacing="4",
+                align="center",
+                padding="8",
+                width="100%",
+            ),
+            min_height="100vh",
+        ),
     )
 
 
