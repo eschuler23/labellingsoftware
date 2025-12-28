@@ -14,7 +14,7 @@ class State(rx.State):
     labels: list[dict] = []
     upload_complete: bool = False
 
-    LABEL_OPTIONS: list[str] = ["Usable", "Too Blurry", "Wrong Setup", "Irrelevant Image"]
+    LABEL_OPTIONS: list[str] = ["Usable", "Too Blurry", "Wrong Setup", "Irrelevant Image", "no visable discharge"]
 
     @rx.var
     def current_filename(self) -> str:
@@ -112,12 +112,14 @@ def label_button(label: str) -> rx.Component:
         "Too Blurry": "orange",
         "Wrong Setup": "blue",
         "Irrelevant Image": "red",
+        "no visable discharge": "purple",
     }
     descriptions = {
         "Usable": "Shows discharge indicating fertility status",
         "Too Blurry": "Has discharge but too poor quality to assess",
         "Wrong Setup": "Has discharge but not captured correctly",
         "Irrelevant Image": "No discharge present",
+        "no visable discharge": "No visible discharge in the image",
     }
     return rx.tooltip(
         rx.button(
@@ -227,6 +229,7 @@ def labeling_area() -> rx.Component:
             label_button("Too Blurry"),
             label_button("Wrong Setup"),
             label_button("Irrelevant Image"),
+            label_button("no visable discharge"),
             spacing="3",
             wrap="wrap",
             justify="center",
