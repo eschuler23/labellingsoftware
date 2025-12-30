@@ -6,6 +6,62 @@ from pathlib import Path
 import reflex as rx
 
 
+TRANSLATIONS = {
+    "en": {
+        "title": "Image Labeler",
+        "drag_drop": "Drag & drop images here",
+        "click_select": "or click to select",
+        "upload_btn": "Upload Images",
+        "start_over": "Start Over",
+        "all_labeled": "All images labeled!",
+        "labeled_count": "Labeled {count} images",
+        "no_images": "No images",
+        "back": "Back",
+        "skip": "Skip",
+        "export": "Export CSV",
+        "no_images_uploaded": "No images uploaded",
+        "complete_msg": "Complete! Labeled {labeled} of {total} images",
+        "progress_msg": "Image {current} of {total}",
+        "label_Usable": "Usable",
+        "label_Too Blurry": "Too Blurry",
+        "label_Wrong Setup": "Wrong Setup",
+        "label_Irrelevant Image": "Irrelevant Image",
+        "label_no visable discharge": "no visable discharge",
+        "desc_Usable": "Shows discharge indicating fertility status",
+        "desc_Too Blurry": "Has discharge but too poor quality to assess",
+        "desc_Wrong Setup": "Has discharge but not captured correctly",
+        "desc_Irrelevant Image": "No discharge present",
+        "desc_no visable discharge": "No visible discharge in the image",
+    },
+    "de": {
+        "title": "Bild-Beschrifter",
+        "drag_drop": "Bilder hierher ziehen & ablegen",
+        "click_select": "oder klicken zum Auswählen",
+        "upload_btn": "Bilder hochladen",
+        "start_over": "Neu starten",
+        "all_labeled": "Alle Bilder beschriftet!",
+        "labeled_count": "{count} Bilder beschriftet",
+        "no_images": "Keine Bilder",
+        "back": "Zurück",
+        "skip": "Überspringen",
+        "export": "CSV exportieren",
+        "no_images_uploaded": "Keine Bilder hochgeladen",
+        "complete_msg": "Fertig! {labeled} von {total} Bildern beschriftet",
+        "progress_msg": "Bild {current} von {total}",
+        "label_Usable": "Verwendbar",
+        "label_Too Blurry": "Zu verschwommen",
+        "label_Wrong Setup": "Falscher Aufbau",
+        "label_Irrelevant Image": "Irrelevantes Bild",
+        "label_no visable discharge": "Kein sichtbarer Ausfluss",
+        "desc_Usable": "Zeigt Ausfluss, der den Fruchtbarkeitsstatus anzeigt",
+        "desc_Too Blurry": "Hat Ausfluss, aber zu schlechte Qualität zur Beurteilung",
+        "desc_Wrong Setup": "Hat Ausfluss, aber nicht korrekt aufgenommen",
+        "desc_Irrelevant Image": "Kein Ausfluss vorhanden",
+        "desc_no visable discharge": "Kein sichtbarer Ausfluss im Bild",
+    }
+}
+
+
 class State(rx.State):
     """The app state."""
 
@@ -13,8 +69,16 @@ class State(rx.State):
     current_index: int = 0
     labels: list[dict] = []
     upload_complete: bool = False
+    language: str = "en"
 
     LABEL_OPTIONS: list[str] = ["Usable", "Too Blurry", "Wrong Setup", "Irrelevant Image", "no visable discharge"]
+
+    def toggle_language(self):
+        self.language = "de" if self.language == "en" else "en"
+
+    @rx.var
+    def strings(self) -> dict[str, str]:
+        return TRANSLATIONS[self.language]
 
     @rx.var
     def current_filename(self) -> str:
@@ -27,10 +91,15 @@ class State(rx.State):
     def progress_text(self) -> str:
         """Get progress text."""
         if not self.images:
-            return "No images uploaded"
+            return self.strings["no_images_uploaded"]
         if self.current_index >= len(self.images):
-            return f"Complete! Labeled {len(self.labels)} of {len(self.images)} images"
-        return f"Image {self.current_index + 1} of {len(self.images)}"
+            return self.strings["complete_msg"].format(labeled=len(self.labels), total=len(self.images))
+        return self.strings["progress_msg"].format(current=self.current_index + 1, total=len(self.images))
+
+    @rx.var
+    def labeled_count_text(self) -> str:
+        """Get labeled count text."""
+        return self.strings["labeled_count"].format(count=len(self.labels))
 
     @rx.var
     def is_complete(self) -> bool:
@@ -114,23 +183,16 @@ def label_button(label: str) -> rx.Component:
         "Irrelevant Image": "red",
         "no visable discharge": "purple",
     }
-    descriptions = {
-        "Usable": "Shows discharge indicating fertility status",
-        "Too Blurry": "Has discharge but too poor quality to assess",
-        "Wrong Setup": "Has discharge but not captured correctly",
-        "Irrelevant Image": "No discharge present",
-        "no visable discharge": "No visible discharge in the image",
-    }
     return rx.tooltip(
         rx.button(
-            label,
+            State.strings[f"label_{label}"],
             size="3",
             color_scheme=colors.get(label, "gray"),
             on_click=State.apply_label(label),
             disabled=~State.has_images,
             style={"min_width": "140px"},
         ),
-        content=descriptions.get(label, ""),
+        content=State.strings[f"desc_{label}"],
     )
 
 
@@ -140,8 +202,8 @@ def upload_area() -> rx.Component:
         rx.upload(
             rx.vstack(
                 rx.icon("upload", size=48, color="gray"),
-                rx.text("Drag & drop images here", size="4", color="gray"),
-                rx.text("or click to select", size="2", color="gray"),
+                rx.text(State.strings["drag_drop"], size="4", color="gray"),
+                rx.text(State.strings["click_select"], size="2", color="gray"),
                 align="center",
                 spacing="2",
             ),
@@ -163,7 +225,7 @@ def upload_area() -> rx.Component:
             width="100%",
         ),
         rx.button(
-            "Upload Images",
+            State.strings["upload_btn"],
             size="3",
             on_click=State.handle_upload(rx.upload_files(upload_id="image_upload")),
         ),
@@ -182,7 +244,7 @@ def labeling_area() -> rx.Component:
             rx.text(State.progress_text, size="3", weight="medium"),
             rx.spacer(),
             rx.button(
-                "Start Over",
+                State.strings["start_over"],
                 size="1",
                 variant="ghost",
                 color_scheme="gray",
@@ -205,12 +267,12 @@ def labeling_area() -> rx.Component:
                     State.is_complete,
                     rx.vstack(
                         rx.icon("circle-check", size=64, color="green"),
-                        rx.text("All images labeled!", size="5", weight="bold"),
-                        rx.text(f"Labeled {State.labels.length()} images", size="3", color="gray"),
+                        rx.text(State.strings["all_labeled"], size="5", weight="bold"),
+                        rx.text(State.labeled_count_text, size="3", color="gray"),
                         align="center",
                         spacing="3",
                     ),
-                    rx.text("No images", color="gray"),
+                    rx.text(State.strings["no_images"], color="gray"),
                 ),
             ),
             min_height="400px",
@@ -238,14 +300,14 @@ def labeling_area() -> rx.Component:
         rx.hstack(
             rx.button(
                 rx.icon("arrow-left", size=16),
-                "Back",
+                State.strings["back"],
                 size="2",
                 variant="soft",
                 on_click=State.go_back,
                 disabled=State.current_index <= 0,
             ),
             rx.button(
-                "Skip",
+                State.strings["skip"],
                 rx.icon("arrow-right", size=16),
                 size="2",
                 variant="soft",
@@ -255,7 +317,7 @@ def labeling_area() -> rx.Component:
             rx.spacer(),
             rx.button(
                 rx.icon("download", size=16),
-                "Export CSV",
+                State.strings["export"],
                 size="2",
                 color_scheme="green",
                 on_click=State.export_csv,
@@ -273,15 +335,23 @@ def labeling_area() -> rx.Component:
 def index() -> rx.Component:
     """Main page."""
     return rx.box(
-        rx.color_mode.button(
+        rx.hstack(
+            rx.button(
+                rx.cond(State.language == "en", "DE", "EN"),
+                on_click=State.toggle_language,
+                size="1",
+                variant="soft",
+            ),
+            rx.color_mode.button(),
             position="fixed",
             top="1rem",
             right="1rem",
             z_index="1000",
+            spacing="2",
         ),
         rx.center(
             rx.vstack(
-                rx.heading("Image Labeler", size="7", margin_bottom="4"),
+                rx.heading(State.strings["title"], size="7", margin_bottom="4"),
                 rx.cond(
                     State.upload_complete,
                     labeling_area(),
