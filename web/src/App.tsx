@@ -1,13 +1,33 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-const LABELS = ["Usable", "Too Blurry", "Wrong Setup", "Irrelevant"];
 const SUPPORTED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"];
 
-type ImageItem = {
-  id: string;
+type Project = {
+  id: number;
   name: string;
-  file: File;
+  image_count: number;
+  labeled_count: number;
+  last_index: number;
+};
+
+type ImageItem = {
+  rel_path: string;
+  filename: string;
+  label: string;
   url: string;
+};
+
+type ProjectResponse = {
+  projects: Project[];
+};
+
+type ImagesResponse = {
+  images: ImageItem[];
+  last_index: number;
+};
+
+type LabelsResponse = {
+  labels: string[];
 };
 
 const isSupported = (file: File) => {
@@ -15,25 +35,16 @@ const isSupported = (file: File) => {
   return SUPPORTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
 };
 
-const toDisplayName = (file: File) =>
-  (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-
 const escapeCsv = (value: string) => {
   const escaped = value.replace(/"/g, '""');
   return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
 };
 
-const buildCsv = (items: ImageItem[], labelsMap: Record<string, string>) => {
-  const rows = items
-    .map((item) => ({
-      name: item.name,
-      label: labelsMap[item.name] || "",
-    }))
-    .filter((row) => row.label);
-
+const buildCsv = (items: ImageItem[]) => {
+  const rows = items.filter((item) => item.label);
   const lines = [
     "filename,label",
-    ...rows.map((row) => `${escapeCsv(row.name)},${escapeCsv(row.label)}`),
+    ...rows.map((row) => `${escapeCsv(row.rel_path)},${escapeCsv(row.label)}`),
   ];
   return lines.join("\n");
 };
@@ -48,13 +59,53 @@ const downloadText = (filename: string, text: string) => {
   URL.revokeObjectURL(url);
 };
 
+const fetchJson = async <T,>(url: string, options?: RequestInit): Promise<T> => {
+  const isForm = options?.body instanceof FormData;
+  const headers = { ...(options?.headers || {}) } as Record<string, string>;
+  if (!isForm) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const res = await fetch(url, {
+    ...options,
+    headers,
+  });
+
+  if (!res.ok) {
+    const message = await res.text();
+    throw new Error(message || "Request failed");
+  }
+
+  return (await res.json()) as T;
+};
+
+const groupFilesByRoot = (files: File[]) => {
+  const groups = new Map<string, File[]>();
+
+  files.forEach((file) => {
+    const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    const path = relative && relative.length > 0 ? relative : file.name;
+    const root = path.split("/")[0] || "Uploads";
+    const list = groups.get(root) || [];
+    list.push(file);
+    groups.set(root, list);
+  });
+
+  return Array.from(groups.entries()).map(([name, list]) => ({ name, files: list }));
+};
+
 const App: React.FC = () => {
-  const [items, setItems] = useState<ImageItem[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [images, setImages] = useState<ImageItem[]>([]);
+  const [labelOptions, setLabelOptions] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [labelsMap, setLabelsMap] = useState<Record<string, string>>({});
+  const [newLabel, setNewLabel] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const itemsRef = useRef<ImageItem[]>([]);
 
   useEffect(() => {
     if (!fileInputRef.current) return;
@@ -62,96 +113,254 @@ const App: React.FC = () => {
     fileInputRef.current.setAttribute("directory", "");
   }, []);
 
-  useEffect(() => {
-    itemsRef.current = items;
-  }, [items]);
+  const loadProjects = useCallback(async () => {
+    try {
+      const data = await fetchJson<ProjectResponse>("/api/projects");
+      setProjects(data.projects);
+      if (!selectedProjectId && data.projects.length > 0) {
+        setSelectedProjectId(data.projects[0].id);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load projects");
+    }
+  }, [selectedProjectId]);
 
-  useEffect(() => {
-    return () => {
-      itemsRef.current.forEach((item) => URL.revokeObjectURL(item.url));
-    };
+  const updateProjectCounts = useCallback((projectId: number, nextImages: ImageItem[]) => {
+    const labeled = nextImages.filter((item) => item.label).length;
+    setProjects((prev) =>
+      prev.map((project) =>
+        project.id === projectId
+          ? { ...project, image_count: nextImages.length, labeled_count: labeled }
+          : project
+      )
+    );
   }, []);
 
-  const currentItem = items[currentIndex] || null;
-  const currentLabel = currentItem ? labelsMap[currentItem.name] || "" : "";
+  const loadProjectData = useCallback(
+    async (projectId: number) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [imagesRes, labelsRes] = await Promise.all([
+          fetchJson<ImagesResponse>(`/api/projects/${projectId}/images`),
+          fetchJson<LabelsResponse>(`/api/projects/${projectId}/label-options`),
+        ]);
 
-  const labeledCount = Object.keys(labelsMap).length;
-  const progressPercent = items.length ? Math.round((labeledCount / items.length) * 100) : 0;
+        setImages(imagesRes.images);
+        updateProjectCounts(projectId, imagesRes.images);
+        setLabelOptions(labelsRes.labels);
+        const safeIndex = Math.min(imagesRes.last_index || 0, Math.max(imagesRes.images.length - 1, 0));
+        setCurrentIndex(safeIndex);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load project");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [updateProjectCounts]
+  );
+
+  useEffect(() => {
+    loadProjects();
+  }, [loadProjects]);
+
+  useEffect(() => {
+    if (selectedProjectId === null) return;
+    loadProjectData(selectedProjectId);
+  }, [loadProjectData, selectedProjectId]);
+
+  useEffect(() => {
+    if (currentIndex >= images.length) {
+      setCurrentIndex(Math.max(images.length - 1, 0));
+    }
+  }, [currentIndex, images.length]);
+
+  useEffect(() => {
+    if (selectedProjectId === null) return;
+    const handle = setTimeout(() => {
+      fetchJson(`/api/projects/${selectedProjectId}/position`, {
+        method: "POST",
+        body: JSON.stringify({ index: currentIndex }),
+      }).catch(() => undefined);
+      setProjects((prev) =>
+        prev.map((project) =>
+          project.id === selectedProjectId ? { ...project, last_index: currentIndex } : project
+        )
+      );
+    }, 400);
+
+    return () => clearTimeout(handle);
+  }, [currentIndex, selectedProjectId]);
+
+  const refreshImages = useCallback(async () => {
+    if (selectedProjectId === null) return;
+    setLoading(true);
+    try {
+      await fetchJson(`/api/projects/${selectedProjectId}/rescan`, { method: "POST" });
+      const imagesRes = await fetchJson<ImagesResponse>(
+        `/api/projects/${selectedProjectId}/images`
+      );
+      setImages(imagesRes.images);
+      updateProjectCounts(selectedProjectId, imagesRes.images);
+      setCurrentIndex((prev) => Math.min(prev, Math.max(imagesRes.images.length - 1, 0)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh images");
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedProjectId, updateProjectCounts]);
 
   const handleFilesChange = useCallback(
-    (event: React.ChangeEvent<HTMLInputElement>) => {
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
       const list = event.target.files;
       if (!list) return;
 
       const files = Array.from(list).filter(isSupported);
       if (!files.length) {
-        setItems([]);
-        setLabelsMap({});
-        setCurrentIndex(0);
+        setError("No supported images found in that folder.");
         return;
       }
 
-      items.forEach((item) => URL.revokeObjectURL(item.url));
+      const groups = groupFilesByRoot(files);
+      setUploading(true);
+      setError(null);
 
-      const nextItems = files.map((file, index) => {
-        const url = URL.createObjectURL(file);
-        const name = toDisplayName(file);
-        return {
-          id: `${name}-${file.lastModified}-${index}`,
-          name,
-          file,
-          url,
-        } satisfies ImageItem;
-      });
+      const created: number[] = [];
 
-      setItems(nextItems);
-      setLabelsMap({});
-      setCurrentIndex(0);
-    },
-    [items]
-  );
+      try {
+        for (const group of groups) {
+          const form = new FormData();
+          form.append("project_name", group.name);
+          group.files.forEach((file) => {
+            const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+            const filename = relative && relative.length > 0 ? relative : file.name;
+            form.append("files", file, filename);
+          });
 
-  const applyLabel = useCallback(
-    (label: string) => {
-      if (!currentItem) return;
+          const response = await fetchJson<{ project: Project }>("/api/projects/upload", {
+            method: "POST",
+            body: form,
+          });
+          created.push(response.project.id);
+        }
 
-      setLabelsMap((prev) => ({ ...prev, [currentItem.name]: label }));
-
-      if (currentIndex < items.length - 1) {
-        setCurrentIndex((prev) => Math.min(prev + 1, items.length - 1));
+        await loadProjects();
+        if (created.length > 0) {
+          setSelectedProjectId(created[created.length - 1]);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Upload failed");
+      } finally {
+        setUploading(false);
+        event.target.value = "";
       }
     },
-    [currentIndex, currentItem, items.length]
+    [loadProjects]
   );
 
-  const clearLabel = useCallback(() => {
-    if (!currentItem) return;
-    setLabelsMap((prev) => {
-      const next = { ...prev };
-      delete next[currentItem.name];
-      return next;
-    });
-  }, [currentItem]);
+  const currentItem = images[currentIndex] || null;
+  const currentLabel = currentItem?.label || "";
+
+  const labeledCount = useMemo(() => images.filter((item) => item.label).length, [images]);
+
+  const progressPercent = images.length
+    ? Math.round((labeledCount / images.length) * 100)
+    : 0;
+
+  const applyLabel = useCallback(
+    async (label: string) => {
+      if (!currentItem || selectedProjectId === null) return;
+      const relPath = currentItem.rel_path;
+      const prevLabel = currentItem.label;
+
+      try {
+        await fetchJson(`/api/projects/${selectedProjectId}/labels`, {
+          method: "POST",
+          body: JSON.stringify({ rel_path: relPath, label }),
+        });
+
+        setImages((prev) =>
+          prev.map((item, index) =>
+            index === currentIndex ? { ...item, label } : item
+          )
+        );
+
+        const nextImages = images.map((item, index) =>
+          index === currentIndex ? { ...item, label } : item
+        );
+        updateProjectCounts(selectedProjectId, nextImages);
+
+        if (currentIndex < images.length - 1) {
+          setCurrentIndex((prev) => Math.min(prev + 1, images.length - 1));
+        }
+
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to save label");
+      }
+    },
+    [currentIndex, currentItem, images, selectedProjectId, updateProjectCounts]
+  );
+
+  const clearLabel = useCallback(async () => {
+    if (!currentItem || selectedProjectId === null) return;
+    try {
+      await fetchJson(`/api/projects/${selectedProjectId}/labels`, {
+        method: "POST",
+        body: JSON.stringify({ rel_path: currentItem.rel_path, label: "" }),
+      });
+
+      setImages((prev) =>
+        prev.map((item, index) =>
+          index === currentIndex ? { ...item, label: "" } : item
+        )
+      );
+
+      const nextImages = images.map((item, index) =>
+        index === currentIndex ? { ...item, label: "" } : item
+      );
+      updateProjectCounts(selectedProjectId, nextImages);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to clear label");
+    }
+  }, [currentIndex, currentItem, images, selectedProjectId, updateProjectCounts]);
 
   const goPrev = useCallback(() => {
     setCurrentIndex((prev) => Math.max(prev - 1, 0));
   }, []);
 
   const goNext = useCallback(() => {
-    setCurrentIndex((prev) => Math.min(prev + 1, items.length - 1));
-  }, [items.length]);
+    setCurrentIndex((prev) => Math.min(prev + 1, images.length - 1));
+  }, [images.length]);
 
   const skip = useCallback(() => {
-    if (currentIndex < items.length - 1) {
-      setCurrentIndex((prev) => Math.min(prev + 1, items.length - 1));
+    if (currentIndex < images.length - 1) {
+      setCurrentIndex((prev) => Math.min(prev + 1, images.length - 1));
     }
-  }, [currentIndex, items.length]);
+  }, [currentIndex, images.length]);
 
   const handleExport = useCallback(() => {
-    if (!items.length) return;
-    const csv = buildCsv(items, labelsMap);
+    if (!images.length) return;
+    const csv = buildCsv(images);
     downloadText("labels.csv", csv);
-  }, [items, labelsMap]);
+  }, [images]);
+
+  const handleAddLabel = useCallback(async () => {
+    const label = newLabel.trim();
+    if (!label || selectedProjectId === null) return;
+    try {
+      const response = await fetchJson<LabelsResponse>(
+        `/api/projects/${selectedProjectId}/label-options`,
+        {
+          method: "POST",
+          body: JSON.stringify({ name: label }),
+        }
+      );
+      setLabelOptions(response.labels);
+      setNewLabel("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add label");
+    }
+  }, [newLabel, selectedProjectId]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -166,9 +375,9 @@ const App: React.FC = () => {
         goPrev();
       } else if (/^[1-9]$/.test(event.key)) {
         const index = Number(event.key) - 1;
-        if (LABELS[index]) {
+        if (labelOptions[index]) {
           event.preventDefault();
-          applyLabel(LABELS[index]);
+          applyLabel(labelOptions[index]);
         }
       } else if (event.key.toLowerCase() === "x") {
         if (currentLabel) {
@@ -180,46 +389,47 @@ const App: React.FC = () => {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [applyLabel, clearLabel, currentLabel, goNext, goPrev]);
+  }, [applyLabel, clearLabel, currentLabel, goNext, goPrev, labelOptions]);
 
-  const sidebarList = useMemo(() => {
-    if (!items.length) return null;
-    return items.map((item, index) => {
-      const label = labelsMap[item.name] || "";
-      return (
-        <button
-          key={item.id}
-          className={`list-item ${index === currentIndex ? "active" : ""}`}
-          onClick={() => setCurrentIndex(index)}
-          type="button"
-        >
-          <span className="list-name">{item.name}</span>
-          <span className={`pill ${label ? "pill-filled" : "pill-empty"}`}>
-            {label || "Unlabeled"}
-          </span>
-        </button>
-      );
-    });
-  }, [currentIndex, items, labelsMap]);
+  const sidebarProjects = useMemo(() => {
+    if (!projects.length) return null;
+    return projects.map((project) => (
+      <button
+        key={project.id}
+        className={`list-item ${project.id === selectedProjectId ? "active" : ""}`}
+        onClick={() => setSelectedProjectId(project.id)}
+        type="button"
+      >
+        <div className="list-name">{project.name}</div>
+        <div className="project-meta">
+          {project.labeled_count}/{project.image_count}
+        </div>
+      </button>
+    ));
+  }, [projects, selectedProjectId]);
 
   return (
     <div className="app">
       <header className="topbar">
         <div>
           <div className="brand">Labeling Studio</div>
-          <div className="subtle">Lean React build for fast image labeling</div>
+          <div className="subtle">Stateful image labeling with SQLite + uploads</div>
         </div>
         <div className="actions">
           <label className="btn primary file-button">
-            Select Folder
+            {uploading ? "Uploading..." : "Upload Folder"}
             <input
               ref={fileInputRef}
               type="file"
               accept={SUPPORTED_EXTENSIONS.join(",")}
               multiple
               onChange={handleFilesChange}
+              disabled={uploading}
             />
           </label>
+          <button className="btn ghost" onClick={refreshImages} disabled={!selectedProjectId || loading} type="button">
+            Refresh
+          </button>
           <button className="btn ghost" onClick={handleExport} disabled={!labeledCount} type="button">
             Export CSV
           </button>
@@ -230,15 +440,17 @@ const App: React.FC = () => {
         <aside className="card sidebar">
           <div className="sidebar-header">
             <div>
-              <div className="section-title">Project</div>
-              <div className="subtle">{items.length ? "Local folder" : "No folder loaded"}</div>
+              <div className="section-title">Projects</div>
+              <div className="subtle">Upload multiple folders to create projects.</div>
             </div>
-            <div className="stat">{items.length} imgs</div>
+            <div className="stat">{projects.length}</div>
           </div>
 
           <div className="progress">
             <div className="progress-row">
-              <span>{items.length ? `Image ${currentIndex + 1} of ${items.length}` : "No images"}</span>
+              <span>
+                {images.length ? `Image ${currentIndex + 1} of ${images.length}` : "No images"}
+              </span>
               <span>{labeledCount} labeled</span>
             </div>
             <div className="progress-track">
@@ -247,25 +459,31 @@ const App: React.FC = () => {
           </div>
 
           <div className="list">
-            {items.length ? (
-              sidebarList
+            {projects.length ? (
+              sidebarProjects
             ) : (
               <div className="empty-list">
                 <div className="empty-icon">+</div>
-                <div className="empty-title">Drop in a folder of images</div>
-                <div className="subtle">Chrome / Edge recommended for folder pickers.</div>
+                <div className="empty-title">Upload a folder to start</div>
+                <div className="subtle">Each folder becomes a separate project.</div>
               </div>
             )}
           </div>
+
+          {error ? <div className="error-banner">{error}</div> : null}
         </aside>
 
         <main className="card viewer">
-          {currentItem ? (
+          {loading ? (
+            <div className="empty-viewer">
+              <div className="empty-title">Loading project...</div>
+            </div>
+          ) : currentItem ? (
             <>
               <div className="viewer-top">
                 <div>
-                  <div className="filename">{currentItem.name}</div>
-                  <div className="subtle">Use 1-4 to label, arrows to navigate, X to clear.</div>
+                  <div className="filename">{currentItem.rel_path}</div>
+                  <div className="subtle">Use 1-9 for labels, arrows to navigate, X to clear.</div>
                 </div>
                 <div className={`pill ${currentLabel ? "pill-filled" : "pill-empty"}`}>
                   {currentLabel || "Unlabeled"}
@@ -273,11 +491,11 @@ const App: React.FC = () => {
               </div>
 
               <div className="image-shell">
-                <img src={currentItem.url} alt={currentItem.name} />
+                <img src={currentItem.url} alt={currentItem.filename} />
               </div>
 
               <div className="label-row">
-                {LABELS.map((label, index) => (
+                {labelOptions.map((label, index) => (
                   <button
                     key={label}
                     type="button"
@@ -293,14 +511,32 @@ const App: React.FC = () => {
                 </button>
               </div>
 
+              <div className="label-add">
+                <input
+                  className="label-input"
+                  value={newLabel}
+                  onChange={(event) => setNewLabel(event.target.value)}
+                  placeholder="Add a custom label"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      handleAddLabel();
+                    }
+                  }}
+                />
+                <button className="btn" onClick={handleAddLabel} disabled={!newLabel.trim()} type="button">
+                  Add Label
+                </button>
+              </div>
+
               <div className="nav-row">
                 <button className="btn" onClick={goPrev} disabled={currentIndex <= 0} type="button">
                   Prev
                 </button>
-                <button className="btn ghost" onClick={skip} disabled={currentIndex >= items.length - 1} type="button">
+                <button className="btn ghost" onClick={skip} disabled={currentIndex >= images.length - 1} type="button">
                   Skip
                 </button>
-                <button className="btn" onClick={goNext} disabled={currentIndex >= items.length - 1} type="button">
+                <button className="btn" onClick={goNext} disabled={currentIndex >= images.length - 1} type="button">
                   Next
                 </button>
               </div>
@@ -309,11 +545,9 @@ const App: React.FC = () => {
             <div className="empty-viewer">
               <div className="empty-title">No images loaded</div>
               <div className="subtle">
-                Select a folder of images to start labeling. The app supports JPG, PNG, GIF, BMP, and WebP.
+                Upload a folder or pick a project from the sidebar to start labeling.
               </div>
-              <div className="empty-hint">
-                Tip: Use number keys 1-4 for labels and arrow keys to navigate.
-              </div>
+              <div className="empty-hint">Tip: You can add custom labels anytime.</div>
             </div>
           )}
         </main>

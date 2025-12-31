@@ -1,12 +1,10 @@
 # Labelingsoftware
 
-A modern React image labeling tool with folder upload, keyboard shortcuts, and CSV export.
+A stateful React image labeling tool with folder uploads, keyboard shortcuts, custom labels, and CSV export.
 
 ## React app
 
-This is a lightweight React implementation that avoids heavy annotation dependencies.
-
-### Run locally
+### Run locally (frontend)
 
 ```bash
 cd web
@@ -14,10 +12,24 @@ npm install
 npm run dev
 ```
 
+### Backend (FastAPI + SQLite)
+
+```bash
+# from repo root
+pip install fastapi uvicorn watchdog
+uvicorn server.app:app --reload
+```
+
+- The backend stores project state in `data/labeling.db`.
+- Uploaded files are stored under `uploads/`.
+- The backend watches `uploads/` for new files and you can click **Refresh** to pull new items into the UI.
+
 ### Usage
 
-- Click **Select Folder** to load a local folder of images (Chrome / Edge recommended).
-- Use number keys **1-4** or click the label buttons to tag images.
+- Click **Upload Folder** to load a local folder of images.
+- Each folder becomes a project in the sidebar (upload multiple folders anytime).
+- Use number keys **1-9** or click label buttons to tag images.
+- Add custom labels in the input below the label buttons.
 - Navigate with **arrow keys**, or use **Prev / Next / Skip**.
 - Click **Export CSV** to download `labels.csv` (`filename,label`).
 
@@ -25,10 +37,3 @@ npm run dev
 
 - Folder selection uses the browser directory picker (via `webkitdirectory`).
 - Supported formats: JPG, PNG, GIF, BMP, WebP.
-
-## Legacy implementations
-
-- `main.py` contains the original Tkinter app.
-- `labellingsoftware/` contains the prior Reflex web app.
-
-Both are kept for reference while the React rewrite takes over.
