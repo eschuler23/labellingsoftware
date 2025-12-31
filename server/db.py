@@ -247,3 +247,63 @@ def add_label_option(project_id: int, name: str) -> list[str]:
             (project_id, name, now),
         )
     return list_label_options(project_id)
+
+
+def update_label_option(project_id: int, old_name: str, new_name: str) -> list[str]:
+    now = utc_now()
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            UPDATE label_options
+            SET name = ?
+            WHERE project_id = ? AND name = ?
+            """,
+            (new_name, project_id, old_name),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Label not found")
+
+        conn.execute(
+            """
+            UPDATE labels
+            SET label = ?, updated_at = ?
+            WHERE project_id = ? AND label = ?
+            """,
+            (new_name, now, project_id, old_name),
+        )
+
+    return list_label_options(project_id)
+
+
+def delete_label_option(project_id: int, name: str, delete_labels: bool = True) -> list[str]:
+    now = utc_now()
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            DELETE FROM label_options
+            WHERE project_id = ? AND name = ?
+            """,
+            (project_id, name),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Label not found")
+
+        if delete_labels:
+            conn.execute(
+                """
+                DELETE FROM labels
+                WHERE project_id = ? AND label = ?
+                """,
+                (project_id, name),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE labels
+                SET label = '', updated_at = ?
+                WHERE project_id = ? AND label = ?
+                """,
+                (now, project_id, name),
+            )
+
+    return list_label_options(project_id)

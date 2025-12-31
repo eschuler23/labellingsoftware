@@ -101,6 +101,8 @@ const App: React.FC = () => {
   const [labelOptions, setLabelOptions] = useState<string[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [newLabel, setNewLabel] = useState("");
+  const [editingLabel, setEditingLabel] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -149,6 +151,8 @@ const App: React.FC = () => {
         setImages(imagesRes.images);
         updateProjectCounts(projectId, imagesRes.images);
         setLabelOptions(labelsRes.labels);
+        setEditingLabel(null);
+        setEditValue("");
         const safeIndex = Math.min(imagesRes.last_index || 0, Math.max(imagesRes.images.length - 1, 0));
         setCurrentIndex(safeIndex);
       } catch (err) {
@@ -362,6 +366,72 @@ const App: React.FC = () => {
     }
   }, [newLabel, selectedProjectId]);
 
+  const handleStartEdit = useCallback((label: string) => {
+    setEditingLabel(label);
+    setEditValue(label);
+  }, []);
+
+  const handleRenameLabel = useCallback(async () => {
+    if (!editingLabel || selectedProjectId === null) return;
+    const nextName = editValue.trim();
+    if (!nextName) return;
+    if (nextName === editingLabel) {
+      setEditingLabel(null);
+      setEditValue("");
+      return;
+    }
+    try {
+      const response = await fetchJson<LabelsResponse>(`/api/projects/${selectedProjectId}/label-options`, {
+        method: "PATCH",
+        body: JSON.stringify({ old_name: editingLabel, new_name: nextName }),
+      });
+      setLabelOptions(response.labels);
+      setImages((prev) =>
+        prev.map((item) =>
+          item.label === editingLabel ? { ...item, label: nextName } : item
+        )
+      );
+      const nextImages = images.map((item) =>
+        item.label === editingLabel ? { ...item, label: nextName } : item
+      );
+      updateProjectCounts(selectedProjectId, nextImages);
+      setEditingLabel(null);
+      setEditValue("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to rename label");
+    }
+  }, [editValue, editingLabel, images, selectedProjectId, updateProjectCounts]);
+
+  const handleDeleteLabel = useCallback(
+    async (label: string) => {
+      if (selectedProjectId === null) return;
+      if (!window.confirm(`Delete label \"${label}\"? This will clear it from labeled images.`)) {
+        return;
+      }
+      try {
+        const response = await fetchJson<LabelsResponse>(`/api/projects/${selectedProjectId}/label-options`, {
+          method: "DELETE",
+          body: JSON.stringify({ name: label, delete_labels: true }),
+        });
+        setLabelOptions(response.labels);
+        setImages((prev) =>
+          prev.map((item) => (item.label === label ? { ...item, label: "" } : item))
+        );
+        const nextImages = images.map((item) =>
+          item.label === label ? { ...item, label: "" } : item
+        );
+        updateProjectCounts(selectedProjectId, nextImages);
+        if (editingLabel === label) {
+          setEditingLabel(null);
+          setEditValue("");
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to delete label");
+      }
+    },
+    [editingLabel, images, selectedProjectId, updateProjectCounts]
+  );
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
@@ -527,6 +597,61 @@ const App: React.FC = () => {
                 <button className="btn" onClick={handleAddLabel} disabled={!newLabel.trim()} type="button">
                   Add Label
                 </button>
+              </div>
+
+              <div className="label-manage">
+                <div className="section-title">Manage Labels</div>
+                {labelOptions.map((label) => (
+                  <div key={label} className="label-item">
+                    {editingLabel === label ? (
+                      <input
+                        className="label-inline-input"
+                        value={editValue}
+                        onChange={(event) => setEditValue(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            handleRenameLabel();
+                          }
+                          if (event.key === "Escape") {
+                            setEditingLabel(null);
+                            setEditValue("");
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span className="label-name">{label}</span>
+                    )}
+                    <div className="label-actions">
+                      {editingLabel === label ? (
+                        <>
+                          <button className="btn small" onClick={handleRenameLabel} type="button">
+                            Save
+                          </button>
+                          <button
+                            className="btn ghost small"
+                            onClick={() => {
+                              setEditingLabel(null);
+                              setEditValue("");
+                            }}
+                            type="button"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn ghost small" onClick={() => handleStartEdit(label)} type="button">
+                            Edit
+                          </button>
+                          <button className="btn ghost small" onClick={() => handleDeleteLabel(label)} type="button">
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
 
               <div className="nav-row">

@@ -29,7 +29,7 @@ uvicorn server.app:app --reload
 - Click **Upload Folder** to load a local folder of images.
 - Each folder becomes a project in the sidebar (upload multiple folders anytime).
 - Use number keys **1-9** or click label buttons to tag images.
-- Add custom labels in the input below the label buttons.
+- Add, rename, or delete labels in the **Manage Labels** section.
 - Navigate with **arrow keys**, or use **Prev / Next / Skip**.
 - Click **Export CSV** to download `labels.csv` (`filename,label`).
 

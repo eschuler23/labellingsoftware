@@ -270,6 +270,50 @@ body {
   border-color: rgba(249, 115, 22, 0.6);
 }
 
+.label-manage {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(234, 223, 206, 0.9);
+}
+
+.label-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(31, 27, 22, 0.04);
+}
+
+.label-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.label-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.label-inline-input {
+  flex: 1;
+  min-width: 160px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(31, 27, 22, 0.12);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.label-inline-input:focus {
+  outline: 2px solid rgba(249, 115, 22, 0.4);
+  border-color: rgba(249, 115, 22, 0.6);
+}
+
 .label-button {
   display: inline-flex;
   align-items: center;
@@ -339,6 +383,11 @@ body {
 
 .btn.ghost {
   background: rgba(31, 27, 22, 0.04);
+}
+
+.btn.small {
+  padding: 6px 10px;
+  font-size: 12px;
 }
 
 .file-button {
