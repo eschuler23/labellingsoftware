@@ -1,369 +1,75 @@
 """Image Labeling App built with Reflex."""
 
-import csv
-from pathlib import Path
-
 import reflex as rx
 
-
-TRANSLATIONS = {
-    "en": {
-        "title": "Image Labeler",
-        "drag_drop": "Drag & drop images here",
-        "click_select": "or click to select",
-        "upload_btn": "Upload Images",
-        "start_over": "Start Over",
-        "all_labeled": "All images labeled!",
-        "labeled_count": "Labeled {count} images",
-        "no_images": "No images",
-        "back": "Back",
-        "skip": "Skip",
-        "export": "Export CSV",
-        "no_images_uploaded": "No images uploaded",
-        "complete_msg": "Complete! Labeled {labeled} of {total} images",
-        "progress_msg": "Image {current} of {total}",
-        "label_Usable": "Usable",
-        "label_Too Blurry": "Too Blurry",
-        "label_Wrong Setup": "Wrong Setup",
-        "label_Irrelevant Image": "Irrelevant Image",
-        "label_no visable discharge": "no visable discharge",
-        "desc_Usable": "Shows discharge indicating fertility status",
-        "desc_Too Blurry": "Has discharge but too poor quality to assess",
-        "desc_Wrong Setup": "Has discharge but not captured correctly",
-        "desc_Irrelevant Image": "No discharge present",
-        "desc_no visable discharge": "No visible discharge in the image",
-    },
-    "de": {
-        "title": "Bild-Beschrifter",
-        "drag_drop": "Bilder hierher ziehen & ablegen",
-        "click_select": "oder klicken zum Auswählen",
-        "upload_btn": "Bilder hochladen",
-        "start_over": "Neu starten",
-        "all_labeled": "Alle Bilder beschriftet!",
-        "labeled_count": "{count} Bilder beschriftet",
-        "no_images": "Keine Bilder",
-        "back": "Zurück",
-        "skip": "Überspringen",
-        "export": "CSV exportieren",
-        "no_images_uploaded": "Keine Bilder hochgeladen",
-        "complete_msg": "Fertig! {labeled} von {total} Bildern beschriftet",
-        "progress_msg": "Bild {current} von {total}",
-        "label_Usable": "Verwendbar",
-        "label_Too Blurry": "Zu verschwommen",
-        "label_Wrong Setup": "Falscher Aufbau",
-        "label_Irrelevant Image": "Irrelevantes Bild",
-        "label_no visable discharge": "Kein sichtbarer Ausfluss",
-        "desc_Usable": "Zeigt Ausfluss, der den Fruchtbarkeitsstatus anzeigt",
-        "desc_Too Blurry": "Hat Ausfluss, aber zu schlechte Qualität zur Beurteilung",
-        "desc_Wrong Setup": "Hat Ausfluss, aber nicht korrekt aufgenommen",
-        "desc_Irrelevant Image": "Kein Ausfluss vorhanden",
-        "desc_no visable discharge": "Kein sichtbarer Ausfluss im Bild",
-    }
-}
-
-
-class State(rx.State):
-    """The app state."""
-
-    images: list[str] = []
-    current_index: int = 0
-    labels: list[dict] = []
-    upload_complete: bool = False
-    language: str = "en"
-
-    LABEL_OPTIONS: list[str] = ["Usable", "Too Blurry", "Wrong Setup", "Irrelevant Image", "no visable discharge"]
-
-    def toggle_language(self):
-        self.language = "de" if self.language == "en" else "en"
-
-    @rx.var
-    def strings(self) -> dict[str, str]:
-        return TRANSLATIONS[self.language]
-
-    @rx.var
-    def current_filename(self) -> str:
-        """Get the current image filename."""
-        if not self.images or self.current_index >= len(self.images):
-            return ""
-        return self.images[self.current_index]
-
-    @rx.var
-    def progress_text(self) -> str:
-        """Get progress text."""
-        if not self.images:
-            return self.strings["no_images_uploaded"]
-        if self.current_index >= len(self.images):
-            return self.strings["complete_msg"].format(labeled=len(self.labels), total=len(self.images))
-        return self.strings["progress_msg"].format(current=self.current_index + 1, total=len(self.images))
-
-    @rx.var
-    def labeled_count_text(self) -> str:
-        """Get labeled count text."""
-        return self.strings["labeled_count"].format(count=len(self.labels))
-
-    @rx.var
-    def is_complete(self) -> bool:
-        """Check if all images are labeled."""
-        return len(self.images) > 0 and self.current_index >= len(self.images)
-
-    @rx.var
-    def has_images(self) -> bool:
-        """Check if there are images to label."""
-        return len(self.images) > 0 and self.current_index < len(self.images)
-
-    @rx.var
-    def has_labels(self) -> bool:
-        """Check if any labels have been applied."""
-        return len(self.labels) > 0
-
-    async def handle_upload(self, files: list[rx.UploadFile]):
-        """Handle the upload of image files."""
-        for file in files:
-            upload_data = await file.read()
-            outfile = rx.get_upload_dir() / file.filename
-
-            with outfile.open("wb") as file_object:
-                file_object.write(upload_data)
-
-            self.images.append(file.filename)
-
-        self.upload_complete = True
-
-    def apply_label(self, label: str):
-        """Apply a label to the current image."""
-        if self.current_index >= len(self.images):
-            return
-
-        self.labels.append({
-            "filename": self.images[self.current_index],
-            "label": label,
-        })
-        self.current_index += 1
-
-    def skip_image(self):
-        """Skip the current image without labeling."""
-        if self.current_index < len(self.images):
-            self.current_index += 1
-
-    def go_back(self):
-        """Go back to the previous image."""
-        if self.current_index > 0:
-            self.current_index -= 1
-            # Remove the last label if we're going back
-            if self.labels and self.labels[-1]["filename"] == self.images[self.current_index]:
-                self.labels.pop()
-
-    def clear_all(self):
-        """Reset the app state."""
-        self.images = []
-        self.current_index = 0
-        self.labels = []
-        self.upload_complete = False
-
-    def export_csv(self):
-        """Export labels to CSV file."""
-        if not self.labels:
-            return
-
-        output_path = rx.get_upload_dir() / "labels.csv"
-        with open(output_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["filename", "label"])
-            writer.writeheader()
-            writer.writerows(self.labels)
-
-        return rx.download(url=rx.get_upload_url("labels.csv"))
-
-
-def label_button(label: str) -> rx.Component:
-    """Create a label button with tooltip."""
-    colors = {
-        "Usable": "green",
-        "Too Blurry": "orange",
-        "Wrong Setup": "blue",
-        "Irrelevant Image": "red",
-        "no visable discharge": "purple",
-    }
-    return rx.tooltip(
-        rx.button(
-            State.strings[f"label_{label}"],
-            size="3",
-            color_scheme=colors.get(label, "gray"),
-            on_click=State.apply_label(label),
-            disabled=~State.has_images,
-            style={"min_width": "140px"},
-        ),
-        content=State.strings[f"desc_{label}"],
-    )
-
-
-def upload_area() -> rx.Component:
-    """Create the upload area."""
-    return rx.vstack(
-        rx.upload(
-            rx.vstack(
-                rx.icon("upload", size=48, color="gray"),
-                rx.text(State.strings["drag_drop"], size="4", color="gray"),
-                rx.text(State.strings["click_select"], size="2", color="gray"),
-                align="center",
-                spacing="2",
-            ),
-            id="image_upload",
-            multiple=True,
-            accept={"image/*": [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]},
-            border="2px dashed #ccc",
-            border_radius="lg",
-            padding="8",
-            width="100%",
-            min_height="200px",
-            display="flex",
-            align_items="center",
-            justify_content="center",
-            _hover={"border_color": "blue", "cursor": "pointer"},
-        ),
-        rx.hstack(
-            rx.text(rx.selected_files("image_upload"), size="2", color="gray"),
-            width="100%",
-        ),
-        rx.button(
-            State.strings["upload_btn"],
-            size="3",
-            on_click=State.handle_upload(rx.upload_files(upload_id="image_upload")),
-        ),
-        width="100%",
-        max_width="600px",
-        spacing="4",
-        align="center",
-    )
-
-
-def labeling_area() -> rx.Component:
-    """Create the main labeling interface."""
-    return rx.vstack(
-        # Progress
-        rx.hstack(
-            rx.text(State.progress_text, size="3", weight="medium"),
-            rx.spacer(),
-            rx.button(
-                State.strings["start_over"],
-                size="1",
-                variant="ghost",
-                color_scheme="gray",
-                on_click=State.clear_all,
-            ),
-            width="100%",
-        ),
-        # Image display
-        rx.box(
-            rx.cond(
-                State.has_images,
-                rx.image(
-                    src=rx.get_upload_url(State.current_filename),
-                    max_height="500px",
-                    max_width="100%",
-                    object_fit="contain",
-                    border_radius="md",
-                ),
-                rx.cond(
-                    State.is_complete,
-                    rx.vstack(
-                        rx.icon("circle-check", size=64, color="green"),
-                        rx.text(State.strings["all_labeled"], size="5", weight="bold"),
-                        rx.text(State.labeled_count_text, size="3", color="gray"),
-                        align="center",
-                        spacing="3",
-                    ),
-                    rx.text(State.strings["no_images"], color="gray"),
-                ),
-            ),
-            min_height="400px",
-            width="100%",
-            display="flex",
-            align_items="center",
-            justify_content="center",
-            background="var(--gray-2)",
-            border_radius="lg",
-        ),
-        # Filename
-        rx.text(State.current_filename, size="2", color="gray"),
-        # Label buttons
-        rx.hstack(
-            label_button("Usable"),
-            label_button("Too Blurry"),
-            label_button("Wrong Setup"),
-            label_button("Irrelevant Image"),
-            label_button("no visable discharge"),
-            spacing="3",
-            wrap="wrap",
-            justify="center",
-        ),
-        # Navigation
-        rx.hstack(
-            rx.button(
-                rx.icon("arrow-left", size=16),
-                State.strings["back"],
-                size="2",
-                variant="soft",
-                on_click=State.go_back,
-                disabled=State.current_index <= 0,
-            ),
-            rx.button(
-                State.strings["skip"],
-                rx.icon("arrow-right", size=16),
-                size="2",
-                variant="soft",
-                on_click=State.skip_image,
-                disabled=~State.has_images,
-            ),
-            rx.spacer(),
-            rx.button(
-                rx.icon("download", size=16),
-                State.strings["export"],
-                size="2",
-                color_scheme="green",
-                on_click=State.export_csv,
-                disabled=~State.has_labels,
-            ),
-            width="100%",
-        ),
-        width="100%",
-        max_width="800px",
-        spacing="4",
-        padding="4",
-    )
+from .api import serve_image_endpoint as serve_image
+from .components import add_folder_dialog, image_viewer, label_buttons, sidebar
+from .state import AppState
 
 
 def index() -> rx.Component:
-    """Main page."""
-    return rx.box(
-        rx.hstack(
-            rx.button(
-                rx.cond(State.language == "en", "DE", "EN"),
-                on_click=State.toggle_language,
-                size="1",
-                variant="soft",
-            ),
-            rx.color_mode.button(),
-            position="fixed",
-            top="1rem",
-            right="1rem",
-            z_index="1000",
-            spacing="2",
-        ),
-        rx.center(
+    """Main page with sidebar layout."""
+    return rx.hstack(
+        # Sidebar
+        sidebar(),
+        # Main content area
+        rx.box(
             rx.vstack(
-                rx.heading(State.strings["title"], size="7", margin_bottom="4"),
-                rx.cond(
-                    State.upload_complete,
-                    labeling_area(),
-                    upload_area(),
+                # Header
+                rx.hstack(
+                    rx.heading(
+                        rx.cond(
+                            AppState.has_project_selected,
+                            AppState.selected_project_name,
+                            "Image Labeler",
+                        ),
+                        size="6",
+                    ),
+                    rx.spacer(),
+                    width="100%",
+                    padding="4",
+                    border_bottom="1px solid var(--gray-5)",
                 ),
-                spacing="4",
-                align="center",
-                padding="8",
+                # Main content - centered
+                rx.center(
+                    rx.hstack(
+                        # Image viewer (center)
+                        rx.box(
+                            image_viewer(),
+                            flex="1",
+                            max_width="800px",
+                        ),
+                        # Label controls (right side)
+                        rx.cond(
+                            AppState.has_project_selected & (AppState.total_images > 0),
+                            rx.box(
+                                label_buttons(),
+                                width="280px",
+                                min_width="280px",
+                                border_left="1px solid var(--gray-5)",
+                            ),
+                            rx.box(),
+                        ),
+                        spacing="4",
+                        align="start",
+                    ),
+                    width="100%",
+                    height="calc(100vh - 73px)",
+                    overflow="auto",
+                    padding="4",
+                ),
+                spacing="0",
+                height="100vh",
                 width="100%",
             ),
-            min_height="100vh",
+            flex="1",
         ),
+        # Add folder dialog
+        add_folder_dialog(),
+        spacing="0",
+        width="100%",
+        height="100vh",
+        overflow="hidden",
     )
 
 
@@ -371,6 +77,16 @@ app = rx.App(
     theme=rx.theme(
         accent_color="blue",
         radius="medium",
-    )
+    ),
 )
-app.add_page(index, title="Image Labeler")
+
+# Add the main page
+app.add_page(
+    index,
+    title="Image Labeler",
+    on_load=AppState.on_load,
+)
+
+# Register the API endpoint for serving images
+from starlette.routing import Route
+app._api.routes.append(Route("/_image", serve_image, methods=["GET"]))
