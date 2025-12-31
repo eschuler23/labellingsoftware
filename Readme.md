@@ -1,6 +1,6 @@
 # Labelingsoftware
 
-A stateful React image labeling tool with folder uploads, keyboard shortcuts, custom labels, and CSV export.
+A stateful React image labeling tool with folder uploads, keyboard shortcuts, multi-category labels, and CSV export.
 
 ## React app
 
@@ -28,10 +28,13 @@ uvicorn server.app:app --reload
 
 - Click **Upload Folder** to load a local folder of images.
 - Each folder becomes a project in the sidebar (upload multiple folders anytime).
-- Use number keys **1-9** or click label buttons to tag images.
-- Add, rename, or delete labels in the **Manage Labels** section.
-- Navigate with **arrow keys**, or use **Prev / Next / Skip**.
-- Click **Export CSV** to download `labels.csv` (`filename,label`).
+- Create **label categories** (e.g. “Focus”, “Content type”). Each category can have multiple labels.
+- Assign labels per category; an image can have multiple labels across categories.
+- Use number keys **1-9** for the active category, arrows to navigate, **X** to clear that category.
+- Filter previews by label selection (match any/all).
+- Use **Export Selection** to choose which labels are included in the CSV export.
+- (Optional) Export only images that match selected labels.
+- Click **Export CSV** to download `labels.csv` (`filename` + selected category columns).
 
 ### Notes
 

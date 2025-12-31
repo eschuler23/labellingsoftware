@@ -12,16 +12,19 @@ from pydantic import BaseModel
 
 from .db import (
     UPLOADS_DIR,
+    add_category,
     add_images,
     add_label_option,
     create_project,
+    delete_category,
     delete_label_option,
     get_project,
     init_db,
     list_images,
-    list_label_options,
+    list_label_schema,
     list_projects,
-    set_label,
+    set_image_label,
+    update_category,
     update_label_option,
     update_project_index,
 )
@@ -42,21 +45,39 @@ watcher = UploadWatcher()
 
 class LabelUpdate(BaseModel):
     rel_path: str
-    label: str | None = None
+    category_id: int
+    label_option_id: int | None = None
 
 
 class PositionUpdate(BaseModel):
     index: int
 
 
+class CategoryCreate(BaseModel):
+    name: str
+
+
+class CategoryRename(BaseModel):
+    category_id: int
+    name: str
+
+
+class CategoryDelete(BaseModel):
+    category_id: int
+
+
+class LabelCreate(BaseModel):
+    category_id: int
+    name: str
+
+
 class LabelRename(BaseModel):
-    old_name: str
-    new_name: str
+    label_id: int
+    name: str
 
 
 class LabelDelete(BaseModel):
-    name: str
-    delete_labels: bool = True
+    label_id: int
 
 
 def sanitize_rel_path(raw: str) -> str:
@@ -99,7 +120,7 @@ def api_list_projects() -> dict[str, Any]:
 
 
 @app.post("/api/projects/upload")
-async def api_upload_project(
+def api_upload_project(
     files: list[UploadFile] = File(...),
     project_name: str | None = Form(default=None),
 ) -> dict[str, Any]:
@@ -156,7 +177,7 @@ def api_list_images(project_id: int) -> dict[str, Any]:
             {
                 "rel_path": rel_path,
                 "filename": item["filename"],
-                "label": item.get("label") or "",
+                "labels": item["labels"],
                 "url": url,
             }
         )
@@ -175,60 +196,97 @@ def api_get_image(project_id: int, path: str) -> FileResponse:
     return FileResponse(full_path)
 
 
-@app.get("/api/projects/{project_id}/label-options")
-def api_label_options(project_id: int) -> dict[str, Any]:
+@app.get("/api/projects/{project_id}/label-schema")
+def api_label_schema(project_id: int) -> dict[str, Any]:
     ensure_project(project_id)
-    return {"labels": list_label_options(project_id)}
+    return {"categories": list_label_schema(project_id)}
+
+
+@app.post("/api/projects/{project_id}/label-categories")
+def api_add_label_category(project_id: int, payload: CategoryCreate) -> dict[str, Any]:
+    ensure_project(project_id)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Category name required")
+    try:
+        categories = add_category(project_id, name)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"categories": categories}
+
+
+@app.patch("/api/projects/{project_id}/label-categories")
+def api_update_label_category(project_id: int, payload: CategoryRename) -> dict[str, Any]:
+    ensure_project(project_id)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Category name required")
+    try:
+        categories = update_category(project_id, payload.category_id, name)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"categories": categories}
+
+
+@app.delete("/api/projects/{project_id}/label-categories")
+def api_delete_label_category(project_id: int, payload: CategoryDelete) -> dict[str, Any]:
+    ensure_project(project_id)
+    try:
+        categories = delete_category(project_id, payload.category_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"categories": categories}
 
 
 @app.post("/api/projects/{project_id}/label-options")
-def api_add_label_option(project_id: int, payload: dict[str, str]) -> dict[str, Any]:
-    ensure_project(project_id)
-    name = payload.get("name", "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Label name required")
-    try:
-        labels = add_label_option(project_id, name)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"labels": labels}
-
-
-@app.patch("/api/projects/{project_id}/label-options")
-def api_update_label_option(project_id: int, payload: LabelRename) -> dict[str, Any]:
-    ensure_project(project_id)
-    old_name = payload.old_name.strip()
-    new_name = payload.new_name.strip()
-    if not old_name or not new_name:
-        raise HTTPException(status_code=400, detail="Label names required")
-    if old_name == new_name:
-        return {"labels": list_label_options(project_id)}
-    try:
-        labels = update_label_option(project_id, old_name, new_name)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"labels": labels}
-
-
-@app.delete("/api/projects/{project_id}/label-options")
-def api_delete_label_option(project_id: int, payload: LabelDelete) -> dict[str, Any]:
+def api_add_label_option(project_id: int, payload: LabelCreate) -> dict[str, Any]:
     ensure_project(project_id)
     name = payload.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Label name required")
     try:
-        labels = delete_label_option(project_id, name, payload.delete_labels)
+        categories = add_label_option(project_id, payload.category_id, name)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"labels": labels}
+    return {"categories": categories}
+
+
+@app.patch("/api/projects/{project_id}/label-options")
+def api_update_label_option(project_id: int, payload: LabelRename) -> dict[str, Any]:
+    ensure_project(project_id)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Label name required")
+    try:
+        categories = update_label_option(project_id, payload.label_id, name)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"categories": categories}
+
+
+@app.delete("/api/projects/{project_id}/label-options")
+def api_delete_label_option(project_id: int, payload: LabelDelete) -> dict[str, Any]:
+    ensure_project(project_id)
+    try:
+        categories = delete_label_option(project_id, payload.label_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"categories": categories}
 
 
 @app.post("/api/projects/{project_id}/labels")
 def api_set_label(project_id: int, payload: LabelUpdate) -> dict[str, Any]:
     ensure_project(project_id)
     rel_path = sanitize_rel_path(payload.rel_path)
-    label = (payload.label or "").strip()
-    set_label(project_id, rel_path, label if label else None)
+    try:
+        set_image_label(
+            project_id,
+            rel_path,
+            payload.category_id,
+            payload.label_option_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
 
 

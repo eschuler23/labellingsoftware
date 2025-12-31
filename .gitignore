@@ -5,5 +5,8 @@ assets/external/
 *.py[cod]
 __pycache__/
 uploaded_files/
+uploads/
 test_images/
 screenshot*.png
+web/dist/
+uv.lock
