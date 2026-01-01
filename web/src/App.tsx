@@ -38,6 +38,7 @@ type ImageItem = {
   rel_path: string;
   filename: string;
   url: string;
+  thumbnail_url: string;
   labels: Record<number, ImageLabel>;
 };
 
@@ -50,6 +51,7 @@ type ImagesResponse = {
     rel_path: string;
     filename: string;
     url: string;
+    thumbnail_url: string;
     labels: ImageLabel[];
   }>;
   last_index: number;
@@ -167,6 +169,7 @@ const normalizeImages = (items: ImagesResponse["images"]): ImageItem[] => {
       rel_path: item.rel_path,
       filename: item.filename,
       url: item.url,
+      thumbnail_url: item.thumbnail_url,
       labels,
     };
   });
@@ -1057,7 +1060,10 @@ const App: React.FC = () => {
               </div>
 
               <div className="image-shell">
-                <img src={currentItem.url} alt={currentItem.filename} />
+                <img
+                  src={currentItem.thumbnail_url}
+                  alt={currentItem.filename}
+                />
               </div>
 
               {filteredIndexes.length > 0 ? (
@@ -1073,7 +1079,7 @@ const App: React.FC = () => {
                         type="button"
                       >
                         <img
-                          src={item.url}
+                          src={item.thumbnail_url}
                           alt={item.filename}
                           loading="lazy"
                         />

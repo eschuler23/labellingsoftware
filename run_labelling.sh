@@ -18,7 +18,7 @@ fi
 source .venv/bin/activate
 
 echo "Installing/Updating Python dependencies..."
-pip install fastapi uvicorn watchdog
+pip install fastapi uvicorn watchdog Pillow
 
 echo "Starting Backend..."
 # Run from root as per Readme

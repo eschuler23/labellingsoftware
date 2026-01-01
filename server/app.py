@@ -28,6 +28,7 @@ from .db import (
     update_label_option,
     update_project_index,
 )
+from .utils import generate_thumbnail, get_thumbnail_path
 from .watchers import SUPPORTED_EXTENSIONS, UploadWatcher
 
 app = FastAPI(title="Labeling Backend")
@@ -154,6 +155,9 @@ def api_upload_project(
         dest.parent.mkdir(parents=True, exist_ok=True)
         with dest.open("wb") as f:
             shutil.copyfileobj(upload.file, f)
+        
+        # Generate thumbnail
+        generate_thumbnail(dest)
 
         collected.append((rel_path, Path(rel_path).name))
 
@@ -173,19 +177,21 @@ def api_list_images(project_id: int) -> dict[str, Any]:
     for item in images:
         rel_path = item["rel_path"]
         url = f"/api/projects/{project_id}/image?path={urllib.parse.quote(rel_path, safe='')}"
+        thumbnail_url = f"{url}&thumbnail=true"
         output.append(
             {
                 "rel_path": rel_path,
                 "filename": item["filename"],
                 "labels": item["labels"],
                 "url": url,
+                "thumbnail_url": thumbnail_url,
             }
         )
     return {"images": output, "last_index": project["last_index"]}
 
 
 @app.get("/api/projects/{project_id}/image")
-def api_get_image(project_id: int, path: str) -> FileResponse:
+def api_get_image(project_id: int, path: str, thumbnail: bool = False) -> FileResponse:
     project = ensure_project(project_id)
     rel_path = sanitize_rel_path(urllib.parse.unquote(path))
     storage_dir = project_dir(project)
@@ -193,6 +199,19 @@ def api_get_image(project_id: int, path: str) -> FileResponse:
     root_path = storage_dir.resolve()
     if not full_path.is_file() or not full_path.is_relative_to(root_path):
         raise HTTPException(status_code=404, detail="Image not found")
+    
+    if thumbnail:
+        thumb_path = get_thumbnail_path(full_path)
+        if thumb_path.exists():
+            return FileResponse(thumb_path)
+        # If thumbnail doesn't exist, try to generate it on the fly
+        try:
+            thumb_path = generate_thumbnail(full_path)
+            if thumb_path.exists():
+                return FileResponse(thumb_path)
+        except Exception:
+            pass # Fallback to original
+            
     return FileResponse(full_path)
 
 
@@ -309,6 +328,10 @@ def api_rescan(project_id: int) -> dict[str, Any]:
             continue
         if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
+        
+        # Generate thumbnail
+        generate_thumbnail(file_path)
+
         rel_path = file_path.relative_to(storage_dir).as_posix()
         collected.append((rel_path, file_path.name))
 
