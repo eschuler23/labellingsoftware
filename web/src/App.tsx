@@ -861,22 +861,59 @@ const App: React.FC = () => {
     goPrev,
   ]);
 
+  const handleDeleteProject = async (projectId: number) => {
+    if (
+      !confirm(
+        "Are you sure you want to delete this project? This cannot be undone."
+      )
+    ) {
+      return;
+    }
+    try {
+      await fetchJson(`/api/projects/${projectId}`, {
+        method: "DELETE",
+      });
+
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      if (selectedProjectId === projectId) {
+        setSelectedProjectId(null);
+        setImages([]);
+        setCategories([]);
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Failed to delete project");
+    }
+  };
+
   const sidebarProjects = useMemo(() => {
     if (!projects.length) return null;
     return projects.map((project) => (
-      <button
+      <div
         key={project.id}
         className={`list-item ${
           project.id === selectedProjectId ? "active" : ""
         }`}
         onClick={() => setSelectedProjectId(project.id)}
-        type="button"
       >
-        <div className="list-name">{project.name}</div>
-        <div className="project-meta">
-          {project.labeled_count}/{project.image_count}
+        <div className="list-content">
+          <div className="list-name">{project.name}</div>
+          <div className="project-meta">
+            {project.labeled_count}/{project.image_count}
+          </div>
         </div>
-      </button>
+        <button
+          className="btn-icon delete-project"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleDeleteProject(project.id);
+          }}
+          type="button"
+          title="Delete project"
+        >
+          ×
+        </button>
+      </div>
     ));
   }, [projects, selectedProjectId]);
 

@@ -294,6 +294,20 @@ def get_project(project_id: int) -> dict | None:
         return dict(row) if row else None
 
 
+def delete_project(project_id: int) -> str:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT storage_dir FROM projects WHERE id = ?", (project_id,)
+        ).fetchone()
+        if not row:
+            raise ValueError("Project not found")
+        storage_dir = row["storage_dir"]
+        
+        conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        
+    return storage_dir
+
+
 def list_projects(include_storage_dir: bool = False) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(

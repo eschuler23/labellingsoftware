@@ -18,6 +18,7 @@ from .db import (
     create_project,
     delete_category,
     delete_label_option,
+    delete_project,
     get_project,
     init_db,
     list_images,
@@ -28,7 +29,7 @@ from .db import (
     update_label_option,
     update_project_index,
 )
-from .utils import generate_thumbnail, get_thumbnail_path
+from .utils import THUMBNAIL_DIR_NAME, generate_thumbnail, get_thumbnail_path
 from .watchers import SUPPORTED_EXTENSIONS, UploadWatcher
 
 app = FastAPI(title="Labeling Backend")
@@ -148,6 +149,9 @@ def api_upload_project(
         if not rel_path:
             continue
 
+        if THUMBNAIL_DIR_NAME in Path(rel_path).parts:
+            continue
+
         if Path(rel_path).suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
 
@@ -167,6 +171,21 @@ def api_upload_project(
     watcher.watch_project(project["id"], storage_dir)
 
     return {"project": project}
+
+
+@app.delete("/api/projects/{project_id}")
+def api_delete_project(project_id: int) -> dict[str, Any]:
+    try:
+        storage_dir_name = delete_project(project_id)
+        storage_dir = UPLOADS_DIR / storage_dir_name
+        if storage_dir.exists():
+            shutil.rmtree(storage_dir)
+        watcher.unwatch_project(project_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return {"ok": True}
 
 
 @app.get("/api/projects/{project_id}/images")
@@ -325,6 +344,8 @@ def api_rescan(project_id: int) -> dict[str, Any]:
     collected: list[tuple[str, str]] = []
     for file_path in storage_dir.rglob("*"):
         if not file_path.is_file():
+            continue
+        if THUMBNAIL_DIR_NAME in file_path.parts:
             continue
         if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
             continue
