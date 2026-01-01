@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 const SUPPORTED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"];
 
@@ -81,12 +87,17 @@ const buildCsv = (
       )
     : items;
 
-  const header = ["filename", ...exportCategories.map((category) => category.name)];
+  const header = [
+    "filename",
+    ...exportCategories.map((category) => category.name),
+  ];
   const rows = filteredItems.map((item) => {
     const values = exportCategories.map((category) => {
       const label = item.labels[category.id];
       if (!label) return "";
-      return selectedLabelIds.has(label.label_option_id) ? label.label_name : "";
+      return selectedLabelIds.has(label.label_option_id)
+        ? label.label_name
+        : "";
     });
     return [item.rel_path, ...values].map(escapeCsv).join(",");
   });
@@ -104,7 +115,10 @@ const downloadText = (filename: string, text: string) => {
   URL.revokeObjectURL(url);
 };
 
-const fetchJson = async <T,>(url: string, options?: RequestInit): Promise<T> => {
+const fetchJson = async <T,>(
+  url: string,
+  options?: RequestInit
+): Promise<T> => {
   const isForm = options?.body instanceof FormData;
   const headers = { ...(options?.headers || {}) } as Record<string, string>;
   if (!isForm) {
@@ -128,7 +142,8 @@ const groupFilesByRoot = (files: File[]) => {
   const groups = new Map<string, File[]>();
 
   files.forEach((file) => {
-    const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    const relative = (file as File & { webkitRelativePath?: string })
+      .webkitRelativePath;
     const path = relative && relative.length > 0 ? relative : file.name;
     const root = path.split("/")[0] || "Uploads";
     const list = groups.get(root) || [];
@@ -136,7 +151,10 @@ const groupFilesByRoot = (files: File[]) => {
     groups.set(root, list);
   });
 
-  return Array.from(groups.entries()).map(([name, list]) => ({ name, files: list }));
+  return Array.from(groups.entries()).map(([name, list]) => ({
+    name,
+    files: list,
+  }));
 };
 
 const normalizeImages = (items: ImagesResponse["images"]): ImageItem[] => {
@@ -156,18 +174,26 @@ const normalizeImages = (items: ImagesResponse["images"]): ImageItem[] => {
 
 const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(
+    null
+  );
   const [images, setImages] = useState<ImageItem[]>([]);
   const [categories, setCategories] = useState<LabelCategory[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [newCategory, setNewCategory] = useState("");
-  const [newLabelByCategory, setNewLabelByCategory] = useState<Record<number, string>>({});
-  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
+  const [newLabelByCategory, setNewLabelByCategory] = useState<
+    Record<number, string>
+  >({});
+  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(
+    null
+  );
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const [editingLabelId, setEditingLabelId] = useState<number | null>(null);
   const [editingLabelName, setEditingLabelName] = useState("");
-  const [selectedLabelIds, setSelectedLabelIds] = useState<Set<number>>(new Set());
+  const [selectedLabelIds, setSelectedLabelIds] = useState<Set<number>>(
+    new Set()
+  );
   const [exportOnlySelected, setExportOnlySelected] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState(false);
   const [filterMode, setFilterMode] = useState<"any" | "all">("any");
@@ -206,16 +232,25 @@ const App: React.FC = () => {
     }
   }, [selectedProjectId]);
 
-  const updateProjectCounts = useCallback((projectId: number, nextImages: ImageItem[]) => {
-    const labeled = nextImages.filter((item) => Object.keys(item.labels).length > 0).length;
-    setProjects((prev) =>
-      prev.map((project) =>
-        project.id === projectId
-          ? { ...project, image_count: nextImages.length, labeled_count: labeled }
-          : project
-      )
-    );
-  }, []);
+  const updateProjectCounts = useCallback(
+    (projectId: number, nextImages: ImageItem[]) => {
+      const labeled = nextImages.filter(
+        (item) => Object.keys(item.labels).length > 0
+      ).length;
+      setProjects((prev) =>
+        prev.map((project) =>
+          project.id === projectId
+            ? {
+                ...project,
+                image_count: nextImages.length,
+                labeled_count: labeled,
+              }
+            : project
+        )
+      );
+    },
+    []
+  );
 
   const loadProjectData = useCallback(
     async (projectId: number) => {
@@ -224,14 +259,19 @@ const App: React.FC = () => {
       try {
         const [imagesRes, schemaRes] = await Promise.all([
           fetchJson<ImagesResponse>(`/api/projects/${projectId}/images`),
-          fetchJson<LabelSchemaResponse>(`/api/projects/${projectId}/label-schema`),
+          fetchJson<LabelSchemaResponse>(
+            `/api/projects/${projectId}/label-schema`
+          ),
         ]);
 
         const normalized = normalizeImages(imagesRes.images);
         setImages(normalized);
         updateProjectCounts(projectId, normalized);
         setCategories(schemaRes.categories);
-        const safeIndex = Math.min(imagesRes.last_index || 0, Math.max(normalized.length - 1, 0));
+        const safeIndex = Math.min(
+          imagesRes.last_index || 0,
+          Math.max(normalized.length - 1, 0)
+        );
         setCurrentIndex(safeIndex);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load project");
@@ -266,7 +306,9 @@ const App: React.FC = () => {
       }).catch(() => undefined);
       setProjects((prev) =>
         prev.map((project) =>
-          project.id === selectedProjectId ? { ...project, last_index: currentIndex } : project
+          project.id === selectedProjectId
+            ? { ...project, last_index: currentIndex }
+            : project
         )
       );
     }, 400);
@@ -279,7 +321,10 @@ const App: React.FC = () => {
       setActiveCategoryId(null);
       return;
     }
-    if (activeCategoryId === null || !categories.some((c) => c.id === activeCategoryId)) {
+    if (
+      activeCategoryId === null ||
+      !categories.some((c) => c.id === activeCategoryId)
+    ) {
       setActiveCategoryId(categories[0].id);
     }
 
@@ -334,14 +379,18 @@ const App: React.FC = () => {
     if (selectedProjectId === null) return;
     setLoading(true);
     try {
-      await fetchJson(`/api/projects/${selectedProjectId}/rescan`, { method: "POST" });
+      await fetchJson(`/api/projects/${selectedProjectId}/rescan`, {
+        method: "POST",
+      });
       const imagesRes = await fetchJson<ImagesResponse>(
         `/api/projects/${selectedProjectId}/images`
       );
       const normalized = normalizeImages(imagesRes.images);
       setImages(normalized);
       updateProjectCounts(selectedProjectId, normalized);
-      setCurrentIndex((prev) => Math.min(prev, Math.max(normalized.length - 1, 0)));
+      setCurrentIndex((prev) =>
+        Math.min(prev, Math.max(normalized.length - 1, 0))
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to refresh images");
     } finally {
@@ -371,15 +420,20 @@ const App: React.FC = () => {
           const form = new FormData();
           form.append("project_name", group.name);
           group.files.forEach((file) => {
-            const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-            const filename = relative && relative.length > 0 ? relative : file.name;
+            const relative = (file as File & { webkitRelativePath?: string })
+              .webkitRelativePath;
+            const filename =
+              relative && relative.length > 0 ? relative : file.name;
             form.append("files", file, filename);
           });
 
-          const response = await fetchJson<{ project: Project }>("/api/projects/upload", {
-            method: "POST",
-            body: form,
-          });
+          const response = await fetchJson<{ project: Project }>(
+            "/api/projects/upload",
+            {
+              method: "POST",
+              body: form,
+            }
+          );
           created.push(response.project.id);
         }
 
@@ -398,7 +452,8 @@ const App: React.FC = () => {
   );
 
   const currentItem = images[currentIndex] || null;
-  const currentLabel = (categoryId: number) => currentItem?.labels[categoryId]?.label_name || "";
+  const currentLabel = (categoryId: number) =>
+    currentItem?.labels[categoryId]?.label_name || "";
 
   const labeledCount = useMemo(
     () => images.filter((item) => Object.keys(item.labels).length > 0).length,
@@ -417,7 +472,9 @@ const App: React.FC = () => {
     const selected = Array.from(filterLabelIds);
     return images
       .map((item, index) => {
-        const itemLabels = Object.values(item.labels).map((label) => label.label_option_id);
+        const itemLabels = Object.values(item.labels).map(
+          (label) => label.label_option_id
+        );
         if (filterMode === "all") {
           return selected.every((id) => itemLabels.includes(id)) ? index : -1;
         }
@@ -478,7 +535,14 @@ const App: React.FC = () => {
         setError(err instanceof Error ? err.message : "Failed to save label");
       }
     },
-    [currentIndex, currentItem, images, labelById, selectedProjectId, updateProjectCounts]
+    [
+      currentIndex,
+      currentItem,
+      images,
+      labelById,
+      selectedProjectId,
+      updateProjectCounts,
+    ]
   );
 
   const clearLabel = useCallback(
@@ -551,7 +615,9 @@ const App: React.FC = () => {
       setEditingCategoryId(null);
       setEditingCategoryName("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to rename category");
+      setError(
+        err instanceof Error ? err.message : "Failed to rename category"
+      );
     }
   }, [editingCategoryId, editingCategoryName, selectedProjectId]);
 
@@ -576,7 +642,9 @@ const App: React.FC = () => {
           })
         );
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete category");
+        setError(
+          err instanceof Error ? err.message : "Failed to delete category"
+        );
       }
     },
     [selectedProjectId]
@@ -627,7 +695,8 @@ const App: React.FC = () => {
   const handleDeleteLabel = useCallback(
     async (labelId: number) => {
       if (selectedProjectId === null) return;
-      if (!window.confirm("Delete this label and clear it from images?")) return;
+      if (!window.confirm("Delete this label and clear it from images?"))
+        return;
       try {
         const response = await fetchJson<LabelSchemaResponse>(
           `/api/projects/${selectedProjectId}/label-options`,
@@ -697,7 +766,12 @@ const App: React.FC = () => {
 
   const handleExport = useCallback(() => {
     if (!images.length) return;
-    const csv = buildCsv(images, categories, selectedLabelIds, exportOnlySelected);
+    const csv = buildCsv(
+      images,
+      categories,
+      selectedLabelIds,
+      exportOnlySelected
+    );
     downloadText("labels.csv", csv);
   }, [categories, exportOnlySelected, images, selectedLabelIds]);
 
@@ -715,7 +789,9 @@ const App: React.FC = () => {
 
   const selectAllLabels = useCallback(() => {
     const all = new Set<number>();
-    categories.forEach((category) => category.labels.forEach((label) => all.add(label.id)));
+    categories.forEach((category) =>
+      category.labels.forEach((label) => all.add(label.id))
+    );
     setSelectedLabelIds(all);
   }, [categories]);
 
@@ -741,7 +817,10 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
-      if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement
+      ) {
         return;
       }
       if (event.key === "ArrowRight") {
@@ -769,14 +848,24 @@ const App: React.FC = () => {
 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [activeCategoryId, applyLabel, categories, clearLabel, currentLabel, goNext, goPrev]);
+  }, [
+    activeCategoryId,
+    applyLabel,
+    categories,
+    clearLabel,
+    currentLabel,
+    goNext,
+    goPrev,
+  ]);
 
   const sidebarProjects = useMemo(() => {
     if (!projects.length) return null;
     return projects.map((project) => (
       <button
         key={project.id}
-        className={`list-item ${project.id === selectedProjectId ? "active" : ""}`}
+        className={`list-item ${
+          project.id === selectedProjectId ? "active" : ""
+        }`}
         onClick={() => setSelectedProjectId(project.id)}
         type="button"
       >
@@ -788,12 +877,25 @@ const App: React.FC = () => {
     ));
   }, [projects, selectedProjectId]);
 
+  const labelCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    images.forEach((item) => {
+      Object.values(item.labels).forEach((label) => {
+        const id = label.label_option_id;
+        counts.set(id, (counts.get(id) || 0) + 1);
+      });
+    });
+    return counts;
+  }, [images]);
+
   return (
     <div className="app">
       <header className="topbar">
         <div>
           <div className="brand">Labeling Studio</div>
-          <div className="subtle">Multi-category labeling with SQLite + uploads</div>
+          <div className="subtle">
+            Multi-category labeling with SQLite + uploads
+          </div>
         </div>
         <div className="actions">
           <div className="filter-toggle">
@@ -809,20 +911,28 @@ const App: React.FC = () => {
               <div className="filter-dropdown">
                 <div className="filter-mode">
                   <button
-                    className={`btn small ${filterMode === "any" ? "primary" : "ghost"}`}
+                    className={`btn small ${
+                      filterMode === "any" ? "primary" : "ghost"
+                    }`}
                     onClick={() => setFilterMode("any")}
                     type="button"
                   >
                     Any
                   </button>
                   <button
-                    className={`btn small ${filterMode === "all" ? "primary" : "ghost"}`}
+                    className={`btn small ${
+                      filterMode === "all" ? "primary" : "ghost"
+                    }`}
                     onClick={() => setFilterMode("all")}
                     type="button"
                   >
                     All
                   </button>
-                  <button className="btn ghost small" onClick={clearFilterLabels} type="button">
+                  <button
+                    className="btn ghost small"
+                    onClick={clearFilterLabels}
+                    type="button"
+                  >
                     Clear
                   </button>
                 </div>
@@ -837,7 +947,9 @@ const App: React.FC = () => {
                             checked={filterLabelIds.has(label.id)}
                             onChange={() => toggleFilterLabel(label.id)}
                           />
-                          <span>{label.name}</span>
+                          <span>
+                            {label.name} ({labelCounts.get(label.id) || 0})
+                          </span>
                         </label>
                       ))}
                     </div>
@@ -857,10 +969,20 @@ const App: React.FC = () => {
               disabled={uploading}
             />
           </label>
-          <button className="btn ghost" onClick={refreshImages} disabled={!selectedProjectId || loading} type="button">
+          <button
+            className="btn ghost"
+            onClick={refreshImages}
+            disabled={!selectedProjectId || loading}
+            type="button"
+          >
             Refresh
           </button>
-          <button className="btn ghost" onClick={handleExport} disabled={!images.length} type="button">
+          <button
+            className="btn ghost"
+            onClick={handleExport}
+            disabled={!images.length}
+            type="button"
+          >
             Export CSV
           </button>
         </div>
@@ -871,7 +993,9 @@ const App: React.FC = () => {
           <div className="sidebar-header">
             <div>
               <div className="section-title">Projects</div>
-              <div className="subtle">Upload multiple folders to create projects.</div>
+              <div className="subtle">
+                Upload multiple folders to create projects.
+              </div>
             </div>
             <div className="stat">{projects.length}</div>
           </div>
@@ -879,12 +1003,17 @@ const App: React.FC = () => {
           <div className="progress">
             <div className="progress-row">
               <span>
-                {images.length ? `Image ${currentIndex + 1} of ${images.length}` : "No images"}
+                {images.length
+                  ? `Image ${currentIndex + 1} of ${images.length}`
+                  : "No images"}
               </span>
               <span>{labeledCount} labeled</span>
             </div>
             <div className="progress-track">
-              <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
+              <div
+                className="progress-fill"
+                style={{ width: `${progressPercent}%` }}
+              />
             </div>
             {filterEnabled ? (
               <div className="filter-status">
@@ -900,7 +1029,9 @@ const App: React.FC = () => {
               <div className="empty-list">
                 <div className="empty-icon">+</div>
                 <div className="empty-title">Upload a folder to start</div>
-                <div className="subtle">Each folder becomes a separate project.</div>
+                <div className="subtle">
+                  Each folder becomes a separate project.
+                </div>
               </div>
             )}
           </div>
@@ -919,39 +1050,44 @@ const App: React.FC = () => {
                 <div>
                   <div className="filename">{currentItem.rel_path}</div>
                   <div className="subtle">
-                    Use 1-9 for labels in the active category, arrows to navigate, X to clear.
+                    Use 1-9 for labels in the active category, arrows to
+                    navigate, X to clear.
                   </div>
                 </div>
               </div>
 
-            <div className="image-shell">
-              <img src={currentItem.url} alt={currentItem.filename} />
-            </div>
-
-            {filteredIndexes.length > 0 ? (
-              <div className="preview-strip">
-                {filteredIndexes.map((index) => {
-                  const item = images[index];
-                  const active = index === currentIndex;
-                  return (
-                    <button
-                      key={item.rel_path}
-                      className={`preview-thumb ${active ? "active" : ""}`}
-                      onClick={() => setCurrentIndex(index)}
-                      type="button"
-                    >
-                      <img src={item.url} alt={item.filename} loading="lazy" />
-                    </button>
-                  );
-                })}
+              <div className="image-shell">
+                <img src={currentItem.url} alt={currentItem.filename} />
               </div>
-            ) : null}
 
-            <div className="label-panel">
-              {categories.map((category) => {
-                const active = category.id === activeCategoryId;
-                const current = currentLabel(category.id);
-                return (
+              {filteredIndexes.length > 0 ? (
+                <div className="preview-strip">
+                  {filteredIndexes.map((index) => {
+                    const item = images[index];
+                    const active = index === currentIndex;
+                    return (
+                      <button
+                        key={item.rel_path}
+                        className={`preview-thumb ${active ? "active" : ""}`}
+                        onClick={() => setCurrentIndex(index)}
+                        type="button"
+                      >
+                        <img
+                          src={item.url}
+                          alt={item.filename}
+                          loading="lazy"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+
+              <div className="label-panel">
+                {categories.map((category) => {
+                  const active = category.id === activeCategoryId;
+                  const current = currentLabel(category.id);
+                  return (
                     <div
                       key={category.id}
                       className={`category-block ${active ? "active" : ""}`}
@@ -961,7 +1097,9 @@ const App: React.FC = () => {
                         <div>
                           <div className="category-name">{category.name}</div>
                           <div className="subtle">
-                            {active ? "Shortcuts active" : "Click to activate shortcuts"}
+                            {active
+                              ? "Shortcuts active"
+                              : "Click to activate shortcuts"}
                           </div>
                         </div>
                         <button
@@ -981,14 +1119,18 @@ const App: React.FC = () => {
                           <button
                             key={label.id}
                             type="button"
-                            className={`label-button ${current === label.name ? "active" : ""}`}
+                            className={`label-button ${
+                              current === label.name ? "active" : ""
+                            }`}
                             onClick={(event) => {
                               event.stopPropagation();
                               applyLabel(category.id, label.id);
                             }}
                           >
                             <span>{label.name}</span>
-                            {active && index < 9 ? <span className="keycap">{index + 1}</span> : null}
+                            {active && index < 9 ? (
+                              <span className="keycap">{index + 1}</span>
+                            ) : null}
                           </button>
                         ))}
                       </div>
@@ -1010,7 +1152,12 @@ const App: React.FC = () => {
                     }
                   }}
                 />
-                <button className="btn" onClick={handleAddCategory} disabled={!newCategory.trim()} type="button">
+                <button
+                  className="btn"
+                  onClick={handleAddCategory}
+                  disabled={!newCategory.trim()}
+                  type="button"
+                >
                   Add Category
                 </button>
               </div>
@@ -1024,7 +1171,9 @@ const App: React.FC = () => {
                         <input
                           className="label-inline-input"
                           value={editingCategoryName}
-                          onChange={(event) => setEditingCategoryName(event.target.value)}
+                          onChange={(event) =>
+                            setEditingCategoryName(event.target.value)
+                          }
                           onKeyDown={(event) => {
                             if (event.key === "Enter") {
                               event.preventDefault();
@@ -1042,7 +1191,11 @@ const App: React.FC = () => {
                       <div className="label-actions">
                         {editingCategoryId === category.id ? (
                           <>
-                            <button className="btn small" onClick={handleRenameCategory} type="button">
+                            <button
+                              className="btn small"
+                              onClick={handleRenameCategory}
+                              type="button"
+                            >
                               Save
                             </button>
                             <button
@@ -1115,7 +1268,9 @@ const App: React.FC = () => {
                             <input
                               className="label-inline-input"
                               value={editingLabelName}
-                              onChange={(event) => setEditingLabelName(event.target.value)}
+                              onChange={(event) =>
+                                setEditingLabelName(event.target.value)
+                              }
                               onKeyDown={(event) => {
                                 if (event.key === "Enter") {
                                   event.preventDefault();
@@ -1133,7 +1288,11 @@ const App: React.FC = () => {
                           <div className="label-actions">
                             {editingLabelId === label.id ? (
                               <>
-                                <button className="btn small" onClick={handleRenameLabel} type="button">
+                                <button
+                                  className="btn small"
+                                  onClick={handleRenameLabel}
+                                  type="button"
+                                >
                                   Save
                                 </button>
                                 <button
@@ -1180,10 +1339,18 @@ const App: React.FC = () => {
                 <div className="export-header">
                   <div className="section-title">Export Selection</div>
                   <div className="label-actions">
-                    <button className="btn ghost small" onClick={selectAllLabels} type="button">
+                    <button
+                      className="btn ghost small"
+                      onClick={selectAllLabels}
+                      type="button"
+                    >
                       Select All
                     </button>
-                    <button className="btn ghost small" onClick={clearAllLabels} type="button">
+                    <button
+                      className="btn ghost small"
+                      onClick={clearAllLabels}
+                      type="button"
+                    >
                       Clear
                     </button>
                   </div>
@@ -1192,7 +1359,9 @@ const App: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={exportOnlySelected}
-                    onChange={(event) => setExportOnlySelected(event.target.checked)}
+                    onChange={(event) =>
+                      setExportOnlySelected(event.target.checked)
+                    }
                   />
                   <span>Only export images that match selected labels</span>
                 </label>
@@ -1216,13 +1385,28 @@ const App: React.FC = () => {
               </div>
 
               <div className="nav-row">
-                <button className="btn" onClick={goPrev} disabled={currentIndex <= 0} type="button">
+                <button
+                  className="btn"
+                  onClick={goPrev}
+                  disabled={currentIndex <= 0}
+                  type="button"
+                >
                   Prev
                 </button>
-                <button className="btn ghost" onClick={skip} disabled={currentIndex >= images.length - 1} type="button">
+                <button
+                  className="btn ghost"
+                  onClick={skip}
+                  disabled={currentIndex >= images.length - 1}
+                  type="button"
+                >
                   Skip
                 </button>
-                <button className="btn" onClick={goNext} disabled={currentIndex >= images.length - 1} type="button">
+                <button
+                  className="btn"
+                  onClick={goNext}
+                  disabled={currentIndex >= images.length - 1}
+                  type="button"
+                >
                   Next
                 </button>
               </div>
@@ -1231,9 +1415,12 @@ const App: React.FC = () => {
             <div className="empty-viewer">
               <div className="empty-title">No images loaded</div>
               <div className="subtle">
-                Upload a folder or pick a project from the sidebar to start labeling.
+                Upload a folder or pick a project from the sidebar to start
+                labeling.
               </div>
-              <div className="empty-hint">Tip: You can add categories and labels anytime.</div>
+              <div className="empty-hint">
+                Tip: You can add categories and labels anytime.
+              </div>
             </div>
           )}
         </main>
