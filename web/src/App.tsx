@@ -863,6 +863,85 @@ const App: React.FC = () => {
     goPrev,
   ]);
 
+  const handleCopySchema = useCallback(() => {
+    localStorage.setItem(
+      "labelling_schema_clipboard",
+      JSON.stringify(categories)
+    );
+    alert("Categories and labels copied to clipboard.");
+  }, [categories]);
+
+  const handlePasteSchema = useCallback(async () => {
+    if (!selectedProjectId) return;
+    const json = localStorage.getItem("labelling_schema_clipboard");
+    if (!json) {
+      alert("No schema found in clipboard.");
+      return;
+    }
+
+    try {
+      const schema = JSON.parse(json) as LabelCategory[];
+      if (!Array.isArray(schema)) throw new Error("Invalid schema format");
+
+      if (
+        !confirm(
+          `Paste ${schema.length} categories and their labels? This will merge with existing ones.`
+        )
+      )
+        return;
+
+      setLoading(true);
+
+      let currentCats = [...categories];
+
+      for (const srcCat of schema) {
+        let targetCat = currentCats.find((c) => c.name === srcCat.name);
+        if (!targetCat) {
+          const res = await fetchJson<LabelSchemaResponse>(
+            `/api/projects/${selectedProjectId}/label-categories`,
+            {
+              method: "POST",
+              body: JSON.stringify({ name: srcCat.name }),
+            }
+          );
+          currentCats = res.categories;
+          targetCat = currentCats.find((c) => c.name === srcCat.name);
+        }
+
+        if (!targetCat) continue;
+
+        for (const srcLabel of srcCat.labels) {
+          if (!targetCat.labels.some((l) => l.name === srcLabel.name)) {
+            const res = await fetchJson<LabelSchemaResponse>(
+              `/api/projects/${selectedProjectId}/label-options`,
+              {
+                method: "POST",
+                body: JSON.stringify({
+                  category_id: targetCat.id,
+                  name: srcLabel.name,
+                }),
+              }
+            );
+            currentCats = res.categories;
+            targetCat = currentCats.find((c) => c.id === targetCat!.id);
+            if (!targetCat) break;
+          }
+        }
+      }
+
+      setCategories(currentCats);
+      alert("Schema pasted successfully.");
+    } catch (err) {
+      console.error(err);
+      setError(
+        "Failed to paste schema: " +
+          (err instanceof Error ? err.message : String(err))
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [categories, selectedProjectId]);
+
   const handleDeleteProject = async (projectId: number) => {
     if (
       !confirm(
@@ -1220,6 +1299,22 @@ const App: React.FC = () => {
 
               <div className="label-manage">
                 <div className="section-title">Manage Categories & Labels</div>
+                <div className="label-actions" style={{ marginBottom: "1rem" }}>
+                  <button
+                    className="btn ghost small"
+                    onClick={handleCopySchema}
+                    type="button"
+                  >
+                    Copy Schema
+                  </button>
+                  <button
+                    className="btn ghost small"
+                    onClick={handlePasteSchema}
+                    type="button"
+                  >
+                    Paste Schema
+                  </button>
+                </div>
                 {categories.map((category) => (
                   <div key={category.id} className="manage-category">
                     <div className="manage-category-header">
