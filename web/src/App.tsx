@@ -498,6 +498,33 @@ const App: React.FC = () => {
     }
   }, [currentIndex, filteredIndexes, images.length]);
 
+  const goPrev = useCallback(() => {
+    setCurrentIndex((prev) => {
+      if (!filteredIndexes.length) {
+        return Math.max(prev - 1, 0);
+      }
+      const position = filteredIndexes.indexOf(prev);
+      if (position <= 0) {
+        return filteredIndexes[0];
+      }
+      return filteredIndexes[position - 1];
+    });
+  }, [filteredIndexes]);
+
+  const goNext = useCallback(() => {
+    setCurrentIndex((prev) => {
+      if (!filteredIndexes.length) {
+        return Math.min(prev + 1, images.length - 1);
+      }
+      const position = filteredIndexes.indexOf(prev);
+      if (position === -1) {
+        return filteredIndexes[0];
+      }
+      const nextIndex = Math.min(position + 1, filteredIndexes.length - 1);
+      return filteredIndexes[nextIndex];
+    });
+  }, [filteredIndexes, images.length]);
+
   const applyLabel = useCallback(
     async (categoryId: number, labelOptionId: number) => {
       if (!currentItem || selectedProjectId === null) return;
@@ -534,6 +561,7 @@ const App: React.FC = () => {
             : item
         );
         updateProjectCounts(selectedProjectId, nextImages);
+        goNext();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to save label");
       }
@@ -545,6 +573,7 @@ const App: React.FC = () => {
       labelById,
       selectedProjectId,
       updateProjectCounts,
+      goNext,
     ]
   );
 
@@ -726,33 +755,6 @@ const App: React.FC = () => {
     },
     [selectedProjectId]
   );
-
-  const goPrev = useCallback(() => {
-    setCurrentIndex((prev) => {
-      if (!filteredIndexes.length) {
-        return Math.max(prev - 1, 0);
-      }
-      const position = filteredIndexes.indexOf(prev);
-      if (position <= 0) {
-        return filteredIndexes[0];
-      }
-      return filteredIndexes[position - 1];
-    });
-  }, [filteredIndexes]);
-
-  const goNext = useCallback(() => {
-    setCurrentIndex((prev) => {
-      if (!filteredIndexes.length) {
-        return Math.min(prev + 1, images.length - 1);
-      }
-      const position = filteredIndexes.indexOf(prev);
-      if (position === -1) {
-        return filteredIndexes[0];
-      }
-      const nextIndex = Math.min(position + 1, filteredIndexes.length - 1);
-      return filteredIndexes[nextIndex];
-    });
-  }, [filteredIndexes, images.length]);
 
   const skip = useCallback(() => {
     if (!filteredIndexes.length) {
