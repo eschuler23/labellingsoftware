@@ -930,6 +930,17 @@ const App: React.FC = () => {
     return counts;
   }, [images]);
 
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    images.forEach((item) => {
+      Object.keys(item.labels).forEach((catIdStr) => {
+        const catId = Number(catIdStr);
+        counts.set(catId, (counts.get(catId) || 0) + 1);
+      });
+    });
+    return counts;
+  }, [images]);
+
   return (
     <div className="app">
       <header className="topbar">
@@ -1412,7 +1423,9 @@ const App: React.FC = () => {
                 </label>
                 {categories.map((category) => (
                   <div key={category.id} className="export-category">
-                    <div className="export-category-name">{category.name}</div>
+                    <div className="export-category-name">
+                      {category.name} ({categoryCounts.get(category.id) || 0})
+                    </div>
                     <div className="export-labels">
                       {category.labels.map((label) => (
                         <label key={label.id} className="checkbox">
@@ -1421,7 +1434,9 @@ const App: React.FC = () => {
                             checked={selectedLabelIds.has(label.id)}
                             onChange={() => toggleLabelSelection(label.id)}
                           />
-                          <span>{label.name}</span>
+                          <span>
+                            {label.name} ({labelCounts.get(label.id) || 0})
+                          </span>
                         </label>
                       ))}
                     </div>
