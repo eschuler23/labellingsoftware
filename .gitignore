@@ -10,3 +10,4 @@ test_images/
 screenshot*.png
 web/dist/
 uv.lock
+.DS_Store

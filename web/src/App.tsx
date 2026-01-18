@@ -7,6 +7,7 @@ import React, {
 } from "react";
 
 const SUPPORTED_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"];
+const LABEL_KEY_SEPARATOR = "\u0000";
 
 type Project = {
   id: number;
@@ -61,6 +62,13 @@ type LabelSchemaResponse = {
   categories: LabelCategory[];
 };
 
+type ExportProjectData = {
+  id: number;
+  name: string;
+  images: ImageItem[];
+  categories: LabelCategory[];
+};
+
 const isSupported = (file: File) => {
   const lower = file.name.toLowerCase();
   return SUPPORTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
@@ -71,37 +79,89 @@ const escapeCsv = (value: string) => {
   return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
 };
 
-const buildCsv = (
-  items: ImageItem[],
-  categories: LabelCategory[],
-  selectedLabelIds: Set<number>,
+const buildLabelKey = (categoryName: string, labelName: string) =>
+  `${categoryName}${LABEL_KEY_SEPARATOR}${labelName}`;
+
+const buildCsvForProjects = (
+  projects: ExportProjectData[],
+  selectedLabelKeys: Set<string>,
   onlySelected: boolean
 ) => {
-  const exportCategories = categories.filter((category) =>
-    category.labels.some((label) => selectedLabelIds.has(label.id))
-  );
+  const hasSelection = selectedLabelKeys.size > 0;
+  const selectedCategoryNames = new Set<string>();
 
-  const filteredItems = onlySelected
-    ? items.filter((item) =>
-        Object.values(item.labels).some((label) =>
-          selectedLabelIds.has(label.label_option_id)
-        )
-      )
-    : items;
-
-  const header = [
-    "filename",
-    ...exportCategories.map((category) => category.name),
-  ];
-  const rows = filteredItems.map((item) => {
-    const values = exportCategories.map((category) => {
-      const label = item.labels[category.id];
-      if (!label) return "";
-      return selectedLabelIds.has(label.label_option_id)
-        ? label.label_name
-        : "";
+  if (hasSelection) {
+    selectedLabelKeys.forEach((key) => {
+      const separatorIndex = key.indexOf(LABEL_KEY_SEPARATOR);
+      if (separatorIndex === -1) return;
+      const categoryName = key.slice(0, separatorIndex);
+      if (categoryName) {
+        selectedCategoryNames.add(categoryName);
+      }
     });
-    return [item.rel_path, ...values].map(escapeCsv).join(",");
+  }
+
+  const categoryNames: string[] = [];
+  const seenCategories = new Set<string>();
+
+  if (hasSelection) {
+    projects.forEach((project) => {
+      project.categories.forEach((category) => {
+        if (!selectedCategoryNames.has(category.name)) {
+          return;
+        }
+        if (!seenCategories.has(category.name)) {
+          seenCategories.add(category.name);
+          categoryNames.push(category.name);
+        }
+      });
+    });
+  }
+
+  const includeProject = projects.length > 1;
+  const header = [
+    ...(includeProject ? ["project"] : []),
+    "filename",
+    ...categoryNames,
+  ];
+
+  const rows: string[] = [];
+
+  projects.forEach((project) => {
+    const categoryNameById = new Map<number, string>();
+    project.categories.forEach((category) => {
+      categoryNameById.set(category.id, category.name);
+    });
+
+    project.images.forEach((item) => {
+      const rowLabels = new Map<string, string>();
+      let matchesSelection = false;
+
+      if (hasSelection) {
+        Object.values(item.labels).forEach((label) => {
+          const categoryName = categoryNameById.get(label.category_id);
+          if (!categoryName) return;
+          const key = buildLabelKey(categoryName, label.label_name);
+          if (!selectedLabelKeys.has(key)) return;
+          rowLabels.set(categoryName, label.label_name);
+          matchesSelection = true;
+        });
+      }
+
+      if (onlySelected && (!hasSelection || !matchesSelection)) {
+        return;
+      }
+
+      const values = categoryNames.map((name) => rowLabels.get(name) || "");
+      const row = [
+        ...(includeProject ? [project.name] : []),
+        item.rel_path,
+        ...values,
+      ]
+        .map(escapeCsv)
+        .join(",");
+      rows.push(row);
+    });
   });
 
   return [header.map(escapeCsv).join(","), ...rows].join("\n");
@@ -194,10 +254,15 @@ const App: React.FC = () => {
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const [editingLabelId, setEditingLabelId] = useState<number | null>(null);
   const [editingLabelName, setEditingLabelName] = useState("");
-  const [selectedLabelIds, setSelectedLabelIds] = useState<Set<number>>(
+  const [exportLabelKeys, setExportLabelKeys] = useState<Set<string>>(
     new Set()
   );
   const [exportOnlySelected, setExportOnlySelected] = useState(false);
+  const [exportProjectIds, setExportProjectIds] = useState<Set<number>>(
+    new Set()
+  );
+  const [exportProjectsTouched, setExportProjectsTouched] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState(false);
   const [filterMode, setFilterMode] = useState<"any" | "all">("any");
   const [filterLabelIds, setFilterLabelIds] = useState<Set<number>>(new Set());
@@ -295,6 +360,37 @@ const App: React.FC = () => {
   }, [loadProjectData, selectedProjectId]);
 
   useEffect(() => {
+    if (!projects.length) {
+      setExportProjectIds(new Set());
+      return;
+    }
+
+    const availableIds = new Set(projects.map((project) => project.id));
+
+    setExportProjectIds((prev) => {
+      const filtered = new Set<number>();
+      prev.forEach((id) => {
+        if (availableIds.has(id)) {
+          filtered.add(id);
+        }
+      });
+
+      if (!exportProjectsTouched) {
+        if (selectedProjectId !== null && availableIds.has(selectedProjectId)) {
+          return new Set([selectedProjectId]);
+        }
+        return filtered;
+      }
+
+      if (filtered.size === 0 && selectedProjectId !== null) {
+        filtered.add(selectedProjectId);
+      }
+
+      return filtered;
+    });
+  }, [exportProjectsTouched, projects, selectedProjectId]);
+
+  useEffect(() => {
     if (currentIndex >= images.length) {
       setCurrentIndex(Math.max(images.length - 1, 0));
     }
@@ -332,20 +428,23 @@ const App: React.FC = () => {
     }
 
     const availableLabelIds = new Set<number>();
+    const availableExportLabelKeys = new Set<string>();
     categories.forEach((category) => {
-      category.labels.forEach((label) => availableLabelIds.add(label.id));
+      category.labels.forEach((label) => {
+        availableLabelIds.add(label.id);
+        availableExportLabelKeys.add(buildLabelKey(category.name, label.name));
+      });
     });
 
-    setSelectedLabelIds((prev) => {
-      const next = new Set<number>(prev);
-      availableLabelIds.forEach((id) => next.add(id));
-      for (const id of Array.from(next)) {
-        if (!availableLabelIds.has(id)) {
-          next.delete(id);
+    setExportLabelKeys((prev) => {
+      const next = new Set<string>();
+      prev.forEach((key) => {
+        if (availableExportLabelKeys.has(key)) {
+          next.add(key);
         }
-      }
+      });
       if (next.size === 0) {
-        availableLabelIds.forEach((id) => next.add(id));
+        availableExportLabelKeys.forEach((key) => next.add(key));
       }
       return next;
     });
@@ -769,39 +868,112 @@ const App: React.FC = () => {
     }
   }, [currentIndex, filteredIndexes, images.length]);
 
-  const handleExport = useCallback(() => {
-    if (!images.length) return;
-    const csv = buildCsv(
-      images,
-      categories,
-      selectedLabelIds,
-      exportOnlySelected
-    );
-    downloadText("labels.csv", csv);
-  }, [categories, exportOnlySelected, images, selectedLabelIds]);
+  const handleExport = useCallback(async () => {
+    const projectIds = exportProjectIds.size
+      ? Array.from(exportProjectIds)
+      : selectedProjectId !== null
+        ? [selectedProjectId]
+        : [];
 
-  const toggleLabelSelection = useCallback((labelId: number) => {
-    setSelectedLabelIds((prev) => {
+    if (!projectIds.length) return;
+
+    const projectIdSet = new Set(projectIds);
+    const exportProjects = projects.filter((project) =>
+      projectIdSet.has(project.id)
+    );
+    if (!exportProjects.length) return;
+
+    setExporting(true);
+    setError(null);
+    try {
+      const data = await Promise.all(
+        exportProjects.map(async (project) => {
+          const [imagesRes, schemaRes] = await Promise.all([
+            fetchJson<ImagesResponse>(`/api/projects/${project.id}/images`),
+            fetchJson<LabelSchemaResponse>(
+              `/api/projects/${project.id}/label-schema`
+            ),
+          ]);
+          return {
+            id: project.id,
+            name: project.name,
+            images: normalizeImages(imagesRes.images),
+            categories: schemaRes.categories,
+          };
+        })
+      );
+
+      const csv = buildCsvForProjects(
+        data,
+        exportLabelKeys,
+        exportOnlySelected
+      );
+      const filename = data.length > 1 ? "labels_multi.csv" : "labels.csv";
+      downloadText(filename, csv);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to export CSV");
+    } finally {
+      setExporting(false);
+    }
+  }, [
+    exportLabelKeys,
+    exportOnlySelected,
+    exportProjectIds,
+    projects,
+    selectedProjectId,
+  ]);
+
+  const toggleExportProject = useCallback((projectId: number) => {
+    setExportProjectsTouched(true);
+    setExportProjectIds((prev) => {
       const next = new Set(prev);
-      if (next.has(labelId)) {
-        next.delete(labelId);
+      if (next.has(projectId)) {
+        if (next.size === 1) {
+          return next;
+        }
+        next.delete(projectId);
       } else {
-        next.add(labelId);
+        next.add(projectId);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllExportProjects = useCallback(() => {
+    setExportProjectsTouched(true);
+    setExportProjectIds(new Set(projects.map((project) => project.id)));
+  }, [projects]);
+
+  const useCurrentProjectForExport = useCallback(() => {
+    if (selectedProjectId === null) return;
+    setExportProjectsTouched(false);
+    setExportProjectIds(new Set([selectedProjectId]));
+  }, [selectedProjectId]);
+
+  const toggleLabelSelection = useCallback((labelKey: string) => {
+    setExportLabelKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(labelKey)) {
+        next.delete(labelKey);
+      } else {
+        next.add(labelKey);
       }
       return next;
     });
   }, []);
 
   const selectAllLabels = useCallback(() => {
-    const all = new Set<number>();
+    const all = new Set<string>();
     categories.forEach((category) =>
-      category.labels.forEach((label) => all.add(label.id))
+      category.labels.forEach((label) =>
+        all.add(buildLabelKey(category.name, label.name))
+      )
     );
-    setSelectedLabelIds(all);
+    setExportLabelKeys(all);
   }, [categories]);
 
   const clearAllLabels = useCallback(() => {
-    setSelectedLabelIds(new Set());
+    setExportLabelKeys(new Set());
   }, []);
 
   const toggleFilterLabel = useCallback((labelId: number) => {
@@ -1112,10 +1284,12 @@ const App: React.FC = () => {
           <button
             className="btn ghost"
             onClick={handleExport}
-            disabled={!images.length}
+            disabled={!exportProjectIds.size || exporting}
             type="button"
           >
-            Export CSV
+            {exporting
+              ? "Exporting..."
+              : `Export CSV${exportProjectIds.size > 1 ? " (" + exportProjectIds.size + ")" : ""}`}
           </button>
         </div>
       </header>
@@ -1487,6 +1661,39 @@ const App: React.FC = () => {
               </div>
 
               <div className="export-panel">
+                <div className="export-projects">
+                  <div className="export-projects-header">
+                    <div className="section-title">Export Projects</div>
+                    <div className="label-actions">
+                      <button
+                        className="btn ghost small"
+                        onClick={selectAllExportProjects}
+                        type="button"
+                      >
+                        Select All
+                      </button>
+                      <button
+                        className="btn ghost small"
+                        onClick={useCurrentProjectForExport}
+                        type="button"
+                      >
+                        Use Current
+                      </button>
+                    </div>
+                  </div>
+                  <div className="export-project-list">
+                    {projects.map((project) => (
+                      <label key={project.id} className="checkbox export-project">
+                        <input
+                          type="checkbox"
+                          checked={exportProjectIds.has(project.id)}
+                          onChange={() => toggleExportProject(project.id)}
+                        />
+                        <span>{project.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
                 <div className="export-header">
                   <div className="section-title">Export Selection</div>
                   <div className="label-actions">
@@ -1526,8 +1733,14 @@ const App: React.FC = () => {
                         <label key={label.id} className="checkbox">
                           <input
                             type="checkbox"
-                            checked={selectedLabelIds.has(label.id)}
-                            onChange={() => toggleLabelSelection(label.id)}
+                            checked={exportLabelKeys.has(
+                              buildLabelKey(category.name, label.name)
+                            )}
+                            onChange={() =>
+                              toggleLabelSelection(
+                                buildLabelKey(category.name, label.name)
+                              )
+                            }
                           />
                           <span>
                             {label.name} ({labelCounts.get(label.id) || 0})

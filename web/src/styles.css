@@ -468,6 +468,32 @@ body {
   border-top: 1px dashed rgba(234, 223, 206, 0.9);
 }
 
+.export-projects {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.export-projects-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.export-project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 160px;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.export-project {
+  font-size: 12px;
+}
+
 .export-header {
   display: flex;
   align-items: center;
