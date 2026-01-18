@@ -17,9 +17,11 @@ from .db import (
     add_label_option,
     create_project,
     delete_category,
+    delete_image,
     delete_label_option,
     delete_project,
     get_project,
+    image_exists,
     init_db,
     list_images,
     list_label_schema,
@@ -217,7 +219,7 @@ def api_list_images(project_id: int) -> dict[str, Any]:
 @app.get("/api/projects/{project_id}/image")
 def api_get_image(project_id: int, path: str, thumbnail: bool = False) -> FileResponse:
     project = ensure_project(project_id)
-    rel_path = sanitize_rel_path(urllib.parse.unquote(path))
+    rel_path = sanitize_rel_path(path)
     storage_dir = project_dir(project)
     full_path = (storage_dir / rel_path).resolve()
     root_path = storage_dir.resolve()
@@ -237,6 +239,43 @@ def api_get_image(project_id: int, path: str, thumbnail: bool = False) -> FileRe
             pass # Fallback to original
             
     return FileResponse(full_path)
+
+
+@app.delete("/api/projects/{project_id}/image")
+def api_delete_image(project_id: int, path: str) -> dict[str, Any]:
+    project = ensure_project(project_id)
+    rel_path = sanitize_rel_path(path)
+    storage_dir = project_dir(project)
+    full_path = (storage_dir / rel_path).resolve()
+    root_path = storage_dir.resolve()
+    if not full_path.is_relative_to(root_path):
+        raise HTTPException(status_code=400, detail="Invalid path")
+
+    file_exists = full_path.is_file()
+    db_exists = image_exists(project_id, rel_path)
+    if not file_exists and not db_exists:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    try:
+        if file_exists:
+            full_path.unlink()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    thumb_path = get_thumbnail_path(full_path)
+    try:
+        if thumb_path.exists():
+            thumb_path.unlink()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    if db_exists:
+        try:
+            delete_image(project_id, rel_path)
+        except ValueError:
+            pass
+
+    return {"ok": True}
 
 
 @app.get("/api/projects/{project_id}/label-schema")
