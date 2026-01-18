@@ -225,6 +225,12 @@ body {
   gap: 16px;
 }
 
+.viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .filename {
   font-size: 18px;
   font-weight: 600;
@@ -263,6 +269,7 @@ body {
   padding: 2px;
   border-radius: 10px;
   cursor: pointer;
+  position: relative;
 }
 
 .preview-thumb img {
@@ -276,6 +283,32 @@ body {
 .preview-thumb.active {
   border-color: rgba(249, 115, 22, 0.6);
   box-shadow: 0 8px 20px rgba(249, 115, 22, 0.12);
+}
+
+.thumb-overlay {
+  position: absolute;
+  inset: 2px;
+  border-radius: 8px;
+  background: rgba(249, 115, 22, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thumb-overlay.labeled {
+  opacity: 1;
+}
+
+.thumb-overlay-label {
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-transform: none;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 2px rgba(15, 23, 42, 0.25);
 }
 
 .label-row {
@@ -646,8 +679,24 @@ body {
   color: #fff;
 }
 
+.btn.danger {
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.08);
+  color: #b91c1c;
+}
+
+.btn.danger:hover:not(:disabled) {
+  border-color: rgba(239, 68, 68, 0.7);
+}
+
 .btn.ghost {
   background: rgba(31, 27, 22, 0.04);
+}
+
+.btn.toggle.active {
+  border-color: rgba(22, 163, 74, 0.5);
+  background: rgba(22, 163, 74, 0.12);
+  color: var(--accent-green);
 }
 
 .btn.small {

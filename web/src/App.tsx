@@ -269,9 +269,11 @@ const App: React.FC = () => {
   );
   const [exportProjectsTouched, setExportProjectsTouched] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [deletingImage, setDeletingImage] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState(false);
   const [filterUseExportSelection, setFilterUseExportSelection] =
     useState(false);
+  const [showUnlabeledOnly, setShowUnlabeledOnly] = useState(false);
   const [filterMode, setFilterMode] = useState<"any" | "all">("any");
   const [filterLabelIds, setFilterLabelIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -596,12 +598,24 @@ const App: React.FC = () => {
     [images]
   );
 
+  const unlabeledCount = useMemo(
+    () => images.filter((item) => Object.keys(item.labels).length === 0).length,
+    [images]
+  );
+
   const progressPercent = images.length
     ? Math.round((labeledCount / images.length) * 100)
     : 0;
 
   const filteredIndexes = useMemo(() => {
     if (!images.length) return [] as number[];
+    if (showUnlabeledOnly) {
+      return images
+        .map((item, index) =>
+          Object.keys(item.labels).length === 0 ? index : -1
+        )
+        .filter((index) => index >= 0);
+    }
     if (!filterEnabled || filterLabelIds.size === 0) {
       return images.map((_, index) => index);
     }
@@ -955,6 +969,53 @@ const App: React.FC = () => {
     exportProjectIds,
     projects,
     selectedProjectId,
+  ]);
+
+  const handleDeleteImage = useCallback(async () => {
+    if (!currentItem || selectedProjectId === null) return;
+    if (
+      !window.confirm(
+        `Delete ${currentItem.rel_path}? This cannot be undone.`
+      )
+    ) {
+      return;
+    }
+
+    const nextIndex = currentIndex;
+    setDeletingImage(true);
+    setError(null);
+    try {
+      await fetchJson(
+        `/api/projects/${selectedProjectId}/image?path=${encodeURIComponent(
+          currentItem.rel_path
+        )}`,
+        { method: "DELETE" }
+      );
+      const imagesRes = await fetchJson<ImagesResponse>(
+        `/api/projects/${selectedProjectId}/images`
+      );
+      const normalized = normalizeImages(imagesRes.images);
+      setImages(normalized);
+      updateProjectCounts(selectedProjectId, normalized);
+      if (normalized.length === 0) {
+        setCurrentIndex(0);
+      } else if (nextIndex >= normalized.length) {
+        setCurrentIndex(normalized.length - 1);
+      } else {
+        setCurrentIndex(nextIndex);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to delete image"
+      );
+    } finally {
+      setDeletingImage(false);
+    }
+  }, [
+    currentIndex,
+    currentItem,
+    selectedProjectId,
+    updateProjectCounts,
   ]);
 
   const toggleExportProject = useCallback((projectId: number) => {
@@ -1448,6 +1509,15 @@ const App: React.FC = () => {
             />
           </label>
           <button
+            className={`btn ghost toggle${
+              showUnlabeledOnly ? " active" : ""
+            }`}
+            onClick={() => setShowUnlabeledOnly((prev) => !prev)}
+            type="button"
+          >
+            Unlabeled{unlabeledCount ? ` (${unlabeledCount})` : ""}
+          </button>
+          <button
             className="btn ghost"
             onClick={refreshImages}
             disabled={!selectedProjectId || loading}
@@ -1495,7 +1565,7 @@ const App: React.FC = () => {
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
-            {filterEnabled ? (
+            {filterEnabled || showUnlabeledOnly ? (
               <div className="filter-status">
                 Showing {filteredIndexes.length} of {images.length} images
               </div>
@@ -1534,6 +1604,16 @@ const App: React.FC = () => {
                     navigate, X to clear.
                   </div>
                 </div>
+                <div className="viewer-actions">
+                  <button
+                    className="btn danger"
+                    onClick={handleDeleteImage}
+                    disabled={deletingImage}
+                    type="button"
+                  >
+                    {deletingImage ? "Deleting..." : "Delete Image"}
+                  </button>
+                </div>
               </div>
 
               <div className="image-shell">
@@ -1548,6 +1628,7 @@ const App: React.FC = () => {
                   {filteredIndexes.map((index) => {
                     const item = images[index];
                     const active = index === currentIndex;
+                    const isLabeled = Object.keys(item.labels).length > 0;
                     return (
                       <button
                         key={item.rel_path}
@@ -1560,6 +1641,14 @@ const App: React.FC = () => {
                           alt={item.filename}
                           loading="lazy"
                         />
+                        <span
+                          className={`thumb-overlay ${
+                            isLabeled ? "labeled" : ""
+                          }`}
+                          aria-hidden="true"
+                        >
+                          <span className="thumb-overlay-label">labeled</span>
+                        </span>
                       </button>
                     );
                   })}
