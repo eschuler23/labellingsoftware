@@ -270,6 +270,8 @@ const App: React.FC = () => {
   const [exportProjectsTouched, setExportProjectsTouched] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState(false);
+  const [filterUseExportSelection, setFilterUseExportSelection] =
+    useState(false);
   const [filterMode, setFilterMode] = useState<"any" | "all">("any");
   const [filterLabelIds, setFilterLabelIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -277,6 +279,7 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const manualFilterLabelIdsRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     if (!fileInputRef.current) return;
@@ -482,6 +485,31 @@ const App: React.FC = () => {
       })
     );
   }, [activeCategoryId, categories, labelById]);
+
+  useEffect(() => {
+    if (!filterUseExportSelection) {
+      manualFilterLabelIdsRef.current = new Set(filterLabelIds);
+    }
+  }, [filterLabelIds, filterUseExportSelection]);
+
+  useEffect(() => {
+    if (filterUseExportSelection && !filterEnabled) {
+      setFilterEnabled(true);
+    }
+  }, [filterEnabled, filterUseExportSelection]);
+
+  useEffect(() => {
+    if (!filterUseExportSelection) return;
+    const next = new Set<number>();
+    categories.forEach((category) => {
+      category.labels.forEach((label) => {
+        if (exportLabelKeys.has(buildLabelKey(category.name, label.name))) {
+          next.add(label.id);
+        }
+      });
+    });
+    setFilterLabelIds(next);
+  }, [categories, exportLabelKeys, filterUseExportSelection]);
 
   const refreshImages = useCallback(async () => {
     if (selectedProjectId === null) return;
@@ -1087,6 +1115,18 @@ const App: React.FC = () => {
     setFilterLabelIds(new Set());
   }, []);
 
+  const handleFilterUseExportSelection = useCallback(
+    (checked: boolean) => {
+      setFilterUseExportSelection(checked);
+      if (checked) {
+        setFilterEnabled(true);
+      } else {
+        setFilterLabelIds(new Set(manualFilterLabelIdsRef.current));
+      }
+    },
+    []
+  );
+
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (
@@ -1314,14 +1354,20 @@ const App: React.FC = () => {
         </div>
         <div className="actions">
           <div className="filter-toggle">
-            <label className="checkbox">
-              <input
-                type="checkbox"
-                checked={filterEnabled}
-                onChange={(event) => setFilterEnabled(event.target.checked)}
+            <button
+              className={`btn ghost filter-trigger${
+                filterEnabled ? " active" : ""
+              }`}
+              onClick={() => setFilterEnabled((prev) => !prev)}
+              type="button"
+              aria-pressed={filterEnabled}
+            >
+              <span
+                className={`filter-dot${filterEnabled ? " active" : ""}`}
+                aria-hidden="true"
               />
               <span>Filter</span>
-            </label>
+            </button>
             {filterEnabled && (
               <div className="filter-dropdown">
                 <div className="filter-mode">
@@ -1346,11 +1392,27 @@ const App: React.FC = () => {
                   <button
                     className="btn ghost small"
                     onClick={clearFilterLabels}
+                    disabled={filterUseExportSelection}
                     type="button"
                   >
                     Clear
                   </button>
                 </div>
+                <label className="checkbox filter-use-export">
+                  <input
+                    type="checkbox"
+                    checked={filterUseExportSelection}
+                    onChange={(event) =>
+                      handleFilterUseExportSelection(event.target.checked)
+                    }
+                  />
+                  <span>Use export selection</span>
+                </label>
+                {filterUseExportSelection ? (
+                  <div className="filter-note subtle">
+                    Export selection drives the filter.
+                  </div>
+                ) : null}
                 {categories.map((category) => (
                   <div key={category.id} className="filter-category">
                     <div className="filter-category-name">{category.name}</div>
@@ -1361,6 +1423,7 @@ const App: React.FC = () => {
                             type="checkbox"
                             checked={filterLabelIds.has(label.id)}
                             onChange={() => toggleFilterLabel(label.id)}
+                            disabled={filterUseExportSelection}
                           />
                           <span>
                             {label.name} ({labelCounts.get(label.id) || 0})
@@ -1849,6 +1912,16 @@ const App: React.FC = () => {
                     }
                   />
                   <span>Only export images that match selected labels</span>
+                </label>
+                <label className="checkbox export-toggle">
+                  <input
+                    type="checkbox"
+                    checked={filterUseExportSelection}
+                    onChange={(event) =>
+                      handleFilterUseExportSelection(event.target.checked)
+                    }
+                  />
+                  <span>Only show images that match selected labels</span>
                 </label>
                 {categories.map((category) => (
                   <div key={category.id} className="export-category">

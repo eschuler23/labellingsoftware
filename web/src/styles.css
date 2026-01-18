@@ -323,6 +323,32 @@ body {
   position: relative;
 }
 
+.filter-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+}
+
+.filter-trigger.active {
+  border-color: rgba(249, 115, 22, 0.6);
+  background: rgba(249, 115, 22, 0.14);
+  color: var(--ink);
+}
+
+.filter-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(31, 27, 22, 0.2);
+  transition: all 0.2s ease;
+}
+
+.filter-dot.active {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.15);
+}
+
 .filter-dropdown {
   position: absolute;
   top: 100%;
@@ -363,6 +389,14 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.filter-use-export {
+  margin-top: 6px;
+}
+
+.filter-note {
+  font-size: 12px;
 }
 
 .label-add {
