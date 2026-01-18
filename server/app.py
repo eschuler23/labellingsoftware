@@ -25,6 +25,7 @@ from .db import (
     list_label_schema,
     list_projects,
     set_image_label,
+    update_category_order,
     update_category,
     update_label_option,
     update_project_index,
@@ -66,6 +67,10 @@ class CategoryRename(BaseModel):
 
 class CategoryDelete(BaseModel):
     category_id: int
+
+
+class CategoryOrderUpdate(BaseModel):
+    order: list[int]
 
 
 class LabelCreate(BaseModel):
@@ -271,6 +276,18 @@ def api_delete_label_category(project_id: int, payload: CategoryDelete) -> dict[
     ensure_project(project_id)
     try:
         categories = delete_category(project_id, payload.category_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"categories": categories}
+
+
+@app.post("/api/projects/{project_id}/label-categories/order")
+def api_update_label_category_order(
+    project_id: int, payload: CategoryOrderUpdate
+) -> dict[str, Any]:
+    ensure_project(project_id)
+    try:
+        categories = update_category_order(project_id, payload.order)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"categories": categories}

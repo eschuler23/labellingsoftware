@@ -78,6 +78,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_id INTEGER NOT NULL,
             name TEXT NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             UNIQUE(project_id, name),
             FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -107,6 +108,38 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         );
         """
     )
+
+
+def _ensure_category_sort_order(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "label_categories"):
+        return
+    if _table_has_column(conn, "label_categories", "sort_order"):
+        return
+
+    conn.execute(
+        "ALTER TABLE label_categories ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"
+    )
+
+    rows = conn.execute(
+        """
+        SELECT id, project_id
+        FROM label_categories
+        ORDER BY project_id, id
+        """
+    ).fetchall()
+
+    current_project = None
+    order = 0
+    for row in rows:
+        project_id = row["project_id"]
+        if project_id != current_project:
+            current_project = project_id
+            order = 0
+        conn.execute(
+            "UPDATE label_categories SET sort_order = ? WHERE id = ?",
+            (order, row["id"]),
+        )
+        order += 1
 
 
 def _image_labels_empty(conn: sqlite3.Connection) -> bool:
@@ -231,16 +264,26 @@ def init_db() -> None:
         _ensure_base_schema(conn)
         _migrate_legacy_schema(conn)
         _ensure_schema(conn)
+        _ensure_category_sort_order(conn)
 
 
 def _ensure_default_category(conn: sqlite3.Connection, project_id: int) -> int:
     now = utc_now()
+    next_order = conn.execute(
+        """
+        SELECT COALESCE(MAX(sort_order), -1) AS max_order
+        FROM label_categories
+        WHERE project_id = ?
+        """,
+        (project_id,),
+    ).fetchone()["max_order"]
+    sort_order = int(next_order) + 1
     conn.execute(
         """
-        INSERT OR IGNORE INTO label_categories (project_id, name, created_at)
-        VALUES (?, ?, ?)
+        INSERT OR IGNORE INTO label_categories (project_id, name, sort_order, created_at)
+        VALUES (?, ?, ?, ?)
         """,
-        (project_id, DEFAULT_CATEGORY_NAME, now),
+        (project_id, DEFAULT_CATEGORY_NAME, sort_order, now),
     )
     category = conn.execute(
         """
@@ -431,7 +474,7 @@ def list_label_schema(project_id: int) -> list[dict]:
             LEFT JOIN label_options l
                 ON c.id = l.category_id
             WHERE c.project_id = ?
-            ORDER BY c.id, l.id
+            ORDER BY c.sort_order, c.id, l.id
             """,
             (project_id,),
         ).fetchall()
@@ -476,12 +519,21 @@ def list_label_schema(project_id: int) -> list[dict]:
 def add_category(project_id: int, name: str) -> list[dict]:
     now = utc_now()
     with get_conn() as conn:
+        next_order = conn.execute(
+            """
+            SELECT COALESCE(MAX(sort_order), -1) AS max_order
+            FROM label_categories
+            WHERE project_id = ?
+            """,
+            (project_id,),
+        ).fetchone()["max_order"]
+        sort_order = int(next_order) + 1
         conn.execute(
             """
-            INSERT OR IGNORE INTO label_categories (project_id, name, created_at)
-            VALUES (?, ?, ?)
+            INSERT OR IGNORE INTO label_categories (project_id, name, sort_order, created_at)
+            VALUES (?, ?, ?, ?)
             """,
-            (project_id, name, now),
+            (project_id, name, sort_order, now),
         )
     return list_label_schema(project_id)
 
@@ -498,6 +550,38 @@ def update_category(project_id: int, category_id: int, name: str) -> list[dict]:
         )
         if cur.rowcount == 0:
             raise ValueError("Category not found")
+    return list_label_schema(project_id)
+
+
+def update_category_order(project_id: int, order: list[int]) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, sort_order
+            FROM label_categories
+            WHERE project_id = ?
+            ORDER BY sort_order, id
+            """,
+            (project_id,),
+        ).fetchall()
+
+        existing_ids = [row["id"] for row in rows]
+        existing_set = set(existing_ids)
+
+        ordered_ids = [category_id for category_id in order if category_id in existing_set]
+        remaining_ids = [category_id for category_id in existing_ids if category_id not in ordered_ids]
+        final_order = ordered_ids + remaining_ids
+
+        for index, category_id in enumerate(final_order):
+            conn.execute(
+                """
+                UPDATE label_categories
+                SET sort_order = ?
+                WHERE id = ? AND project_id = ?
+                """,
+                (index, category_id, project_id),
+            )
+
     return list_label_schema(project_id)
 
 

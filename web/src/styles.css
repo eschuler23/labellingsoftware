@@ -394,6 +394,17 @@ body {
   padding: 12px;
   border-radius: 14px;
   background: rgba(31, 27, 22, 0.03);
+  cursor: grab;
+}
+
+.manage-category.dragging {
+  opacity: 0.6;
+  cursor: grabbing;
+}
+
+.manage-category.drag-over {
+  outline: 2px dashed rgba(249, 115, 22, 0.5);
+  outline-offset: 2px;
 }
 
 .manage-category-header {
@@ -401,6 +412,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  cursor: grab;
 }
 
 .manage-label-add {

@@ -254,6 +254,12 @@ const App: React.FC = () => {
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const [editingLabelId, setEditingLabelId] = useState<number | null>(null);
   const [editingLabelName, setEditingLabelName] = useState("");
+  const [draggingCategoryId, setDraggingCategoryId] = useState<number | null>(
+    null
+  );
+  const [dragOverCategoryId, setDragOverCategoryId] = useState<number | null>(
+    null
+  );
   const [exportLabelKeys, setExportLabelKeys] = useState<Set<string>>(
     new Set()
   );
@@ -950,6 +956,95 @@ const App: React.FC = () => {
     setExportProjectIds(new Set([selectedProjectId]));
   }, [selectedProjectId]);
 
+  const persistCategoryOrder = useCallback(
+    async (nextCategories: LabelCategory[], previousCategories: LabelCategory[]) => {
+      if (selectedProjectId === null) return;
+      try {
+        const response = await fetchJson<LabelSchemaResponse>(
+          `/api/projects/${selectedProjectId}/label-categories/order`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              order: nextCategories.map((category) => category.id),
+            }),
+          }
+        );
+        setCategories(response.categories);
+      } catch (err) {
+        setCategories(previousCategories);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Failed to update category order"
+        );
+      }
+    },
+    [selectedProjectId]
+  );
+
+  const handleCategoryDragStart = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, categoryId: number) => {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", String(categoryId));
+      setDraggingCategoryId(categoryId);
+    },
+    []
+  );
+
+  const handleCategoryDragOver = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+    },
+    []
+  );
+
+  const handleCategoryDragEnter = useCallback(
+    (categoryId: number) => {
+      if (draggingCategoryId === null || draggingCategoryId === categoryId) {
+        return;
+      }
+      setDragOverCategoryId(categoryId);
+    },
+    [draggingCategoryId]
+  );
+
+  const handleCategoryDragEnd = useCallback(() => {
+    setDraggingCategoryId(null);
+    setDragOverCategoryId(null);
+  }, []);
+
+  const handleCategoryDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>, targetId: number) => {
+      event.preventDefault();
+      const sourceId = Number(event.dataTransfer.getData("text/plain"));
+      if (!sourceId || sourceId === targetId) {
+        setDragOverCategoryId(null);
+        return;
+      }
+
+      const sourceIndex = categories.findIndex(
+        (category) => category.id === sourceId
+      );
+      const targetIndex = categories.findIndex(
+        (category) => category.id === targetId
+      );
+      if (sourceIndex < 0 || targetIndex < 0) {
+        setDragOverCategoryId(null);
+        return;
+      }
+
+      const nextCategories = [...categories];
+      const [moved] = nextCategories.splice(sourceIndex, 1);
+      nextCategories.splice(targetIndex, 0, moved);
+      setCategories(nextCategories);
+      setDragOverCategoryId(null);
+      setDraggingCategoryId(null);
+      void persistCategoryOrder(nextCategories, categories);
+    },
+    [categories, persistCategoryOrder]
+  );
+
   const toggleLabelSelection = useCallback((labelKey: string) => {
     setExportLabelKeys((prev) => {
       const next = new Set(prev);
@@ -1192,6 +1287,22 @@ const App: React.FC = () => {
     return counts;
   }, [images]);
 
+  const labelPanelCategories = useMemo(() => {
+    if (!categories.length || activeCategoryId === null) {
+      return categories;
+    }
+    const activeIndex = categories.findIndex(
+      (category) => category.id === activeCategoryId
+    );
+    if (activeIndex <= 0) {
+      return categories;
+    }
+    const next = [...categories];
+    const [active] = next.splice(activeIndex, 1);
+    next.unshift(active);
+    return next;
+  }, [activeCategoryId, categories]);
+
   return (
     <div className="app">
       <header className="topbar">
@@ -1393,7 +1504,7 @@ const App: React.FC = () => {
               ) : null}
 
               <div className="label-panel">
-                {categories.map((category) => {
+                {labelPanelCategories.map((category) => {
                   const active = category.id === activeCategoryId;
                   const current = currentLabel(category.id);
                   return (
@@ -1490,8 +1601,24 @@ const App: React.FC = () => {
                   </button>
                 </div>
                 {categories.map((category) => (
-                  <div key={category.id} className="manage-category">
-                    <div className="manage-category-header">
+                  <div
+                    key={category.id}
+                    className={`manage-category${
+                      draggingCategoryId === category.id ? " dragging" : ""
+                    }${dragOverCategoryId === category.id ? " drag-over" : ""}`}
+                    onDragOver={handleCategoryDragOver}
+                    onDragEnter={() => handleCategoryDragEnter(category.id)}
+                    onDrop={(event) => handleCategoryDrop(event, category.id)}
+                  >
+                    <div
+                      className="manage-category-header"
+                      draggable
+                      onDragStart={(event) =>
+                        handleCategoryDragStart(event, category.id)
+                      }
+                      onDragEnd={handleCategoryDragEnd}
+                      title="Drag to reorder categories"
+                    >
                       {editingCategoryId === category.id ? (
                         <input
                           className="label-inline-input"
