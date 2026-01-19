@@ -271,23 +271,41 @@ const App: React.FC = () => {
   const [exporting, setExporting] = useState(false);
   const [deletingImage, setDeletingImage] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [filterUseExportSelection, setFilterUseExportSelection] =
     useState(false);
+  const [filterLabelKeys, setFilterLabelKeys] = useState<Set<string>>(
+    new Set()
+  );
   const [showUnlabeledOnly, setShowUnlabeledOnly] = useState(false);
   const [filterMode, setFilterMode] = useState<"any" | "all">("any");
-  const [filterLabelIds, setFilterLabelIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const manualFilterLabelIdsRef = useRef<Set<number>>(new Set());
+  const manualFilterLabelKeysRef = useRef<Set<string>>(new Set());
+  const filterToggleRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!fileInputRef.current) return;
     fileInputRef.current.setAttribute("webkitdirectory", "");
     fileInputRef.current.setAttribute("directory", "");
   }, []);
+
+  useEffect(() => {
+    if (!filterOpen) return;
+    const handleClick = (event: MouseEvent) => {
+      if (
+        filterToggleRef.current &&
+        !filterToggleRef.current.contains(event.target as Node)
+      ) {
+        setFilterOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [filterOpen]);
 
   const labelById = useMemo(() => {
     const map = new Map<number, LabelOption>();
@@ -460,16 +478,6 @@ const App: React.FC = () => {
       return next;
     });
 
-    setFilterLabelIds((prev) => {
-      const next = new Set<number>();
-      prev.forEach((id) => {
-        if (availableLabelIds.has(id)) {
-          next.add(id);
-        }
-      });
-      return next;
-    });
-
     setImages((prev) =>
       prev.map((item) => {
         const nextLabels: Record<number, ImageLabel> = {};
@@ -490,9 +498,9 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!filterUseExportSelection) {
-      manualFilterLabelIdsRef.current = new Set(filterLabelIds);
+      manualFilterLabelKeysRef.current = new Set(filterLabelKeys);
     }
-  }, [filterLabelIds, filterUseExportSelection]);
+  }, [filterLabelKeys, filterUseExportSelection]);
 
   useEffect(() => {
     if (filterUseExportSelection && !filterEnabled) {
@@ -502,16 +510,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!filterUseExportSelection) return;
-    const next = new Set<number>();
-    categories.forEach((category) => {
-      category.labels.forEach((label) => {
-        if (exportLabelKeys.has(buildLabelKey(category.name, label.name))) {
-          next.add(label.id);
-        }
-      });
-    });
-    setFilterLabelIds(next);
-  }, [categories, exportLabelKeys, filterUseExportSelection]);
+    setFilterLabelKeys(new Set(exportLabelKeys));
+  }, [exportLabelKeys, filterUseExportSelection]);
 
   const refreshImages = useCallback(async () => {
     if (selectedProjectId === null) return;
@@ -589,10 +589,6 @@ const App: React.FC = () => {
     [loadProjects]
   );
 
-  const currentItem = images[currentIndex] || null;
-  const currentLabel = (categoryId: number) =>
-    currentItem?.labels[categoryId]?.label_name || "";
-
   const labeledCount = useMemo(
     () => images.filter((item) => Object.keys(item.labels).length > 0).length,
     [images]
@@ -616,22 +612,48 @@ const App: React.FC = () => {
         )
         .filter((index) => index >= 0);
     }
-    if (!filterEnabled || filterLabelIds.size === 0) {
+    if (!filterEnabled || filterLabelKeys.size === 0) {
       return images.map((_, index) => index);
     }
-    const selected = Array.from(filterLabelIds);
+    const selected = Array.from(filterLabelKeys);
+    const categoryNameById = new Map<number, string>();
+    categories.forEach((category) => {
+      categoryNameById.set(category.id, category.name);
+    });
     return images
       .map((item, index) => {
-        const itemLabels = Object.values(item.labels).map(
-          (label) => label.label_option_id
-        );
+        const itemLabels = Object.values(item.labels)
+          .map((label) => {
+            const categoryName = categoryNameById.get(label.category_id);
+            if (!categoryName) return null;
+            return buildLabelKey(categoryName, label.label_name);
+          })
+          .filter((key): key is string => Boolean(key));
         if (filterMode === "all") {
           return selected.every((id) => itemLabels.includes(id)) ? index : -1;
         }
         return selected.some((id) => itemLabels.includes(id)) ? index : -1;
       })
       .filter((index) => index >= 0);
-  }, [filterEnabled, filterLabelIds, filterMode, images]);
+  }, [
+    categories,
+    filterEnabled,
+    filterLabelKeys,
+    filterMode,
+    images,
+    showUnlabeledOnly,
+  ]);
+
+  const hasActiveFilter = filterEnabled || showUnlabeledOnly;
+  const hasFilteredResults = filteredIndexes.length > 0;
+  const showFilteredEmpty =
+    hasActiveFilter && images.length > 0 && !hasFilteredResults;
+  const currentItem =
+    hasActiveFilter && !hasFilteredResults
+      ? null
+      : images[currentIndex] || null;
+  const currentLabel = (categoryId: number) =>
+    currentItem?.labels[categoryId]?.label_name || "";
 
   useEffect(() => {
     if (!filteredIndexes.length) {
@@ -1160,32 +1182,36 @@ const App: React.FC = () => {
     setExportLabelKeys(new Set());
   }, []);
 
-  const toggleFilterLabel = useCallback((labelId: number) => {
-    setFilterLabelIds((prev) => {
+  const toggleFilterLabel = useCallback((labelKey: string) => {
+    setFilterLabelKeys((prev) => {
       const next = new Set(prev);
-      if (next.has(labelId)) {
-        next.delete(labelId);
+      if (next.has(labelKey)) {
+        next.delete(labelKey);
       } else {
-        next.add(labelId);
+        next.add(labelKey);
       }
       return next;
     });
   }, []);
 
   const clearFilterLabels = useCallback(() => {
-    setFilterLabelIds(new Set());
+    setFilterLabelKeys(new Set());
   }, []);
 
   const handleFilterUseExportSelection = useCallback(
     (checked: boolean) => {
+      if (checked) {
+        manualFilterLabelKeysRef.current = new Set(filterLabelKeys);
+      }
       setFilterUseExportSelection(checked);
       if (checked) {
         setFilterEnabled(true);
+        setFilterLabelKeys(new Set(exportLabelKeys));
       } else {
-        setFilterLabelIds(new Set(manualFilterLabelIdsRef.current));
+        setFilterLabelKeys(new Set(manualFilterLabelKeysRef.current));
       }
     },
-    []
+    [exportLabelKeys, filterLabelKeys]
   );
 
   useEffect(() => {
@@ -1414,14 +1440,25 @@ const App: React.FC = () => {
           </div>
         </div>
         <div className="actions">
-          <div className="filter-toggle">
+          <div
+            className="filter-toggle"
+            ref={filterToggleRef}
+            onMouseEnter={() => setFilterOpen(true)}
+            onMouseLeave={() => setFilterOpen(false)}
+          >
             <button
               className={`btn ghost filter-trigger${
                 filterEnabled ? " active" : ""
               }`}
-              onClick={() => setFilterEnabled((prev) => !prev)}
+              onClick={() => {
+                if (!filterEnabled) {
+                  setFilterEnabled(true);
+                }
+                setFilterOpen((prev) => !prev);
+              }}
               type="button"
               aria-pressed={filterEnabled}
+              aria-expanded={filterOpen}
             >
               <span
                 className={`filter-dot${filterEnabled ? " active" : ""}`}
@@ -1429,8 +1466,16 @@ const App: React.FC = () => {
               />
               <span>Filter</span>
             </button>
-            {filterEnabled && (
+            {filterOpen && (
               <div className="filter-dropdown">
+                <label className="checkbox filter-active">
+                  <input
+                    type="checkbox"
+                    checked={filterEnabled}
+                    onChange={(event) => setFilterEnabled(event.target.checked)}
+                  />
+                  <span>Filter active</span>
+                </label>
                 <div className="filter-mode">
                   <button
                     className={`btn small ${
@@ -1482,8 +1527,14 @@ const App: React.FC = () => {
                         <label key={label.id} className="checkbox">
                           <input
                             type="checkbox"
-                            checked={filterLabelIds.has(label.id)}
-                            onChange={() => toggleFilterLabel(label.id)}
+                            checked={filterLabelKeys.has(
+                              buildLabelKey(category.name, label.name)
+                            )}
+                            onChange={() =>
+                              toggleFilterLabel(
+                                buildLabelKey(category.name, label.name)
+                              )
+                            }
                             disabled={filterUseExportSelection}
                           />
                           <span>
@@ -1593,6 +1644,15 @@ const App: React.FC = () => {
           {loading ? (
             <div className="empty-viewer">
               <div className="empty-title">Loading project...</div>
+            </div>
+          ) : showFilteredEmpty ? (
+            <div className="empty-viewer">
+              <div className="empty-title">No matches</div>
+              <div className="subtle">
+                No images match the current filters. Adjust the filter
+                selection, turn off <strong>Filter active</strong>, or toggle
+                off <strong>Unlabeled</strong>.
+              </div>
             </div>
           ) : currentItem ? (
             <>

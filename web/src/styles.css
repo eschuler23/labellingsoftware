@@ -356,6 +356,10 @@ body {
   position: relative;
 }
 
+.filter-active {
+  margin-bottom: 4px;
+}
+
 .filter-trigger {
   display: inline-flex;
   align-items: center;
