@@ -40,7 +40,7 @@ type ImageItem = {
   filename: string;
   url: string;
   thumbnail_url: string;
-  labels: Record<number, ImageLabel>;
+  labels: Record<number, ImageLabel[]>;
 };
 
 type ProjectResponse = {
@@ -134,17 +134,23 @@ const buildCsvForProjects = (
     });
 
     project.images.forEach((item) => {
-      const rowLabels = new Map<string, string>();
+      const rowLabels = new Map<string, string[]>();
       let matchesSelection = false;
 
       if (hasSelection) {
-        Object.values(item.labels).forEach((label) => {
-          const categoryName = categoryNameById.get(label.category_id);
-          if (!categoryName) return;
-          const key = buildLabelKey(categoryName, label.label_name);
-          if (!selectedLabelKeys.has(key)) return;
-          rowLabels.set(categoryName, label.label_name);
-          matchesSelection = true;
+        Object.values(item.labels).forEach((labels) => {
+          labels.forEach((label) => {
+            const categoryName = categoryNameById.get(label.category_id);
+            if (!categoryName) return;
+            const key = buildLabelKey(categoryName, label.label_name);
+            if (!selectedLabelKeys.has(key)) return;
+            const existing = rowLabels.get(categoryName) || [];
+            if (!existing.includes(label.label_name)) {
+              existing.push(label.label_name);
+            }
+            rowLabels.set(categoryName, existing);
+            matchesSelection = true;
+          });
         });
       }
 
@@ -152,7 +158,9 @@ const buildCsvForProjects = (
         return;
       }
 
-      const values = categoryNames.map((name) => rowLabels.get(name) || "");
+      const values = categoryNames.map((name) =>
+        rowLabels.get(name)?.join("; ") || ""
+      );
       const row = [
         ...(includeProject ? [project.name] : []),
         item.rel_path,
@@ -221,9 +229,11 @@ const groupFilesByRoot = (files: File[]) => {
 
 const normalizeImages = (items: ImagesResponse["images"]): ImageItem[] => {
   return items.map((item) => {
-    const labels: Record<number, ImageLabel> = {};
+    const labels: Record<number, ImageLabel[]> = {};
     item.labels.forEach((label) => {
-      labels[label.category_id] = label;
+      const list = labels[label.category_id] || [];
+      list.push(label);
+      labels[label.category_id] = list;
     });
     return {
       rel_path: item.rel_path,
@@ -243,6 +253,9 @@ const App: React.FC = () => {
   const [images, setImages] = useState<ImageItem[]>([]);
   const [categories, setCategories] = useState<LabelCategory[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
+  const [activeCategoryName, setActiveCategoryName] = useState<string | null>(
+    null
+  );
   const [currentIndex, setCurrentIndex] = useState(0);
   const [newCategory, setNewCategory] = useState("");
   const [newLabelByCategory, setNewLabelByCategory] = useState<
@@ -446,14 +459,30 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (!categories.length) {
-      setActiveCategoryId(null);
+      if (activeCategoryId !== null) {
+        setActiveCategoryId(null);
+      }
       return;
     }
+    let nextActiveId = activeCategoryId;
+    if (activeCategoryName) {
+      const match = categories.find((c) => c.name === activeCategoryName);
+      if (match) {
+        nextActiveId = match.id;
+      }
+    }
     if (
-      activeCategoryId === null ||
-      !categories.some((c) => c.id === activeCategoryId)
+      nextActiveId === null ||
+      !categories.some((c) => c.id === nextActiveId)
     ) {
-      setActiveCategoryId(categories[0].id);
+      nextActiveId = categories[0].id;
+    }
+    if (nextActiveId !== activeCategoryId) {
+      setActiveCategoryId(nextActiveId);
+    }
+    const nextActiveCategory = categories.find((c) => c.id === nextActiveId);
+    if (nextActiveCategory && nextActiveCategory.name !== activeCategoryName) {
+      setActiveCategoryName(nextActiveCategory.name);
     }
 
     const availableLabelIds = new Set<number>();
@@ -480,21 +509,24 @@ const App: React.FC = () => {
 
     setImages((prev) =>
       prev.map((item) => {
-        const nextLabels: Record<number, ImageLabel> = {};
-        Object.values(item.labels).forEach((label) => {
-          const labelInfo = labelById.get(label.label_option_id);
-          if (labelInfo) {
-            nextLabels[label.category_id] = {
+        const nextLabels: Record<number, ImageLabel[]> = {};
+        Object.values(item.labels).forEach((labels) => {
+          labels.forEach((label) => {
+            const labelInfo = labelById.get(label.label_option_id);
+            if (!labelInfo) return;
+            const list = nextLabels[label.category_id] || [];
+            list.push({
               category_id: label.category_id,
               label_option_id: label.label_option_id,
               label_name: labelInfo.name,
-            };
-          }
+            });
+            nextLabels[label.category_id] = list;
+          });
         });
         return { ...item, labels: nextLabels };
       })
     );
-  }, [activeCategoryId, categories, labelById]);
+  }, [activeCategoryId, activeCategoryName, categories, labelById]);
 
   useEffect(() => {
     if (!filterUseExportSelection) {
@@ -623,6 +655,7 @@ const App: React.FC = () => {
     return images
       .map((item, index) => {
         const itemLabels = Object.values(item.labels)
+          .flat()
           .map((label) => {
             const categoryName = categoryNameById.get(label.category_id);
             if (!categoryName) return null;
@@ -652,8 +685,8 @@ const App: React.FC = () => {
     hasActiveFilter && !hasFilteredResults
       ? null
       : images[currentIndex] || null;
-  const currentLabel = (categoryId: number) =>
-    currentItem?.labels[categoryId]?.label_name || "";
+  const currentLabels = (categoryId: number) =>
+    currentItem?.labels[categoryId] || [];
 
   useEffect(() => {
     if (!filteredIndexes.length) {
@@ -695,9 +728,15 @@ const App: React.FC = () => {
   }, [filteredIndexes, images.length]);
 
   const applyLabel = useCallback(
-    async (categoryId: number, labelOptionId: number) => {
+    async (
+      categoryId: number,
+      labelOptionId: number,
+      options: { mode?: "replace" | "toggle"; advance?: boolean } = {}
+    ) => {
       if (!currentItem || selectedProjectId === null) return;
       const relPath = currentItem.rel_path;
+      const mode = options.mode ?? "replace";
+      const advance = options.advance ?? mode === "replace";
       try {
         await fetchJson(`/api/projects/${selectedProjectId}/labels`, {
           method: "POST",
@@ -705,6 +744,7 @@ const App: React.FC = () => {
             rel_path: relPath,
             category_id: categoryId,
             label_option_id: labelOptionId,
+            mode,
           }),
         });
 
@@ -716,21 +756,50 @@ const App: React.FC = () => {
           label_name: labelInfo.name,
         };
 
+        const applyLabelUpdate = (
+          labels: Record<number, ImageLabel[]>
+        ): Record<number, ImageLabel[]> => {
+          const nextLabels = { ...labels };
+          if (mode === "replace") {
+            nextLabels[categoryId] = [nextLabel];
+            return nextLabels;
+          }
+          const existing = nextLabels[categoryId]
+            ? [...nextLabels[categoryId]]
+            : [];
+          const existingIndex = existing.findIndex(
+            (label) => label.label_option_id === labelOptionId
+          );
+          if (existingIndex >= 0) {
+            existing.splice(existingIndex, 1);
+          } else {
+            existing.push(nextLabel);
+          }
+          if (existing.length > 0) {
+            nextLabels[categoryId] = existing;
+          } else {
+            delete nextLabels[categoryId];
+          }
+          return nextLabels;
+        };
+
         setImages((prev) =>
           prev.map((item, index) =>
             index === currentIndex
-              ? { ...item, labels: { ...item.labels, [categoryId]: nextLabel } }
+              ? { ...item, labels: applyLabelUpdate(item.labels) }
               : item
           )
         );
 
         const nextImages = images.map((item, index) =>
           index === currentIndex
-            ? { ...item, labels: { ...item.labels, [categoryId]: nextLabel } }
+            ? { ...item, labels: applyLabelUpdate(item.labels) }
             : item
         );
         updateProjectCounts(selectedProjectId, nextImages);
-        goNext();
+        if (advance) {
+          goNext();
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to save label");
       }
@@ -813,6 +882,9 @@ const App: React.FC = () => {
         }
       );
       setCategories(response.categories);
+      if (editingCategoryId === activeCategoryId) {
+        setActiveCategoryName(name);
+      }
       setEditingCategoryId(null);
       setEditingCategoryName("");
     } catch (err) {
@@ -910,9 +982,14 @@ const App: React.FC = () => {
         setImages((prev) =>
           prev.map((item) => {
             const nextLabels = { ...item.labels };
-            Object.values(nextLabels).forEach((label) => {
-              if (label.label_option_id === labelId) {
-                delete nextLabels[label.category_id];
+            Object.entries(nextLabels).forEach(([catId, labels]) => {
+              const remaining = labels.filter(
+                (label) => label.label_option_id !== labelId
+              );
+              if (remaining.length > 0) {
+                nextLabels[Number(catId)] = remaining;
+              } else {
+                delete nextLabels[Number(catId)];
               }
             });
             return { ...item, labels: nextLabels };
@@ -1228,19 +1305,30 @@ const App: React.FC = () => {
       } else if (event.key === "ArrowLeft") {
         event.preventDefault();
         goPrev();
-      } else if (/^[1-9]$/.test(event.key)) {
-        if (!activeCategoryId) return;
-        const category = categories.find((c) => c.id === activeCategoryId);
-        if (!category) return;
-        const index = Number(event.key) - 1;
-        if (category.labels[index]) {
-          event.preventDefault();
-          applyLabel(activeCategoryId, category.labels[index].id);
+      } else {
+        const digitMatch =
+          event.code.match(/^Digit([1-9])$/) ||
+          event.code.match(/^Numpad([1-9])$/);
+        if (digitMatch) {
+          if (!activeCategoryId) return;
+          const category = categories.find((c) => c.id === activeCategoryId);
+          if (!category) return;
+          const index = Number(digitMatch[1]) - 1;
+          if (category.labels[index]) {
+            event.preventDefault();
+            const toggle = event.shiftKey;
+            applyLabel(activeCategoryId, category.labels[index].id, {
+              mode: toggle ? "toggle" : "replace",
+              advance: !toggle,
+            });
+          }
+          return;
         }
-      } else if (event.key.toLowerCase() === "x") {
-        if (activeCategoryId && currentLabel(activeCategoryId)) {
-          event.preventDefault();
-          clearLabel(activeCategoryId);
+        if (event.key.toLowerCase() === "x") {
+          if (activeCategoryId && currentLabels(activeCategoryId).length > 0) {
+            event.preventDefault();
+            clearLabel(activeCategoryId);
+          }
         }
       }
     };
@@ -1252,7 +1340,7 @@ const App: React.FC = () => {
     applyLabel,
     categories,
     clearLabel,
-    currentLabel,
+    currentLabels,
     goNext,
     goPrev,
   ]);
@@ -1395,9 +1483,11 @@ const App: React.FC = () => {
   const labelCounts = useMemo(() => {
     const counts = new Map<number, number>();
     images.forEach((item) => {
-      Object.values(item.labels).forEach((label) => {
-        const id = label.label_option_id;
-        counts.set(id, (counts.get(id) || 0) + 1);
+      Object.values(item.labels).forEach((labels) => {
+        labels.forEach((label) => {
+          const id = label.label_option_id;
+          counts.set(id, (counts.get(id) || 0) + 1);
+        });
       });
     });
     return counts;
@@ -1660,8 +1750,8 @@ const App: React.FC = () => {
                 <div>
                   <div className="filename">{currentItem.rel_path}</div>
                   <div className="subtle">
-                    Use 1-9 for labels in the active category, arrows to
-                    navigate, X to clear.
+                    Use 1-9 for labels in the active category, Shift+1-9 to
+                    add/remove, arrows to navigate, X to clear.
                   </div>
                 </div>
                 <div className="viewer-actions">
@@ -1718,12 +1808,15 @@ const App: React.FC = () => {
               <div className="label-panel">
                 {labelPanelCategories.map((category) => {
                   const active = category.id === activeCategoryId;
-                  const current = currentLabel(category.id);
+                  const current = currentLabels(category.id);
                   return (
                     <div
                       key={category.id}
                       className={`category-block ${active ? "active" : ""}`}
-                      onClick={() => setActiveCategoryId(category.id)}
+                      onClick={() => {
+                        setActiveCategoryId(category.id);
+                        setActiveCategoryName(category.name);
+                      }}
                     >
                       <div className="category-header">
                         <div>
@@ -1740,7 +1833,7 @@ const App: React.FC = () => {
                             event.stopPropagation();
                             clearLabel(category.id);
                           }}
-                          disabled={!current}
+                          disabled={current.length === 0}
                           type="button"
                         >
                           Clear
@@ -1752,11 +1845,20 @@ const App: React.FC = () => {
                             key={label.id}
                             type="button"
                             className={`label-button ${
-                              current === label.name ? "active" : ""
+                              current.some(
+                                (selected) =>
+                                  selected.label_option_id === label.id
+                              )
+                                ? "active"
+                                : ""
                             }`}
                             onClick={(event) => {
                               event.stopPropagation();
-                              applyLabel(category.id, label.id);
+                              const toggle = event.shiftKey;
+                              applyLabel(category.id, label.id, {
+                                mode: toggle ? "toggle" : "replace",
+                                advance: !toggle,
+                              });
                             }}
                           >
                             <span>{label.name}</span>

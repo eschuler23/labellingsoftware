@@ -101,7 +101,7 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
             category_id INTEGER NOT NULL,
             label_option_id INTEGER NOT NULL,
             updated_at TEXT NOT NULL,
-            PRIMARY KEY(project_id, rel_path, category_id),
+            PRIMARY KEY(project_id, rel_path, category_id, label_option_id),
             FOREIGN KEY(project_id, rel_path) REFERENCES images(project_id, rel_path) ON DELETE CASCADE,
             FOREIGN KEY(category_id) REFERENCES label_categories(id) ON DELETE CASCADE,
             FOREIGN KEY(label_option_id) REFERENCES label_options(id) ON DELETE CASCADE
@@ -147,6 +147,35 @@ def _image_labels_empty(conn: sqlite3.Connection) -> bool:
         return True
     row = conn.execute("SELECT COUNT(*) AS count FROM image_labels").fetchone()
     return row["count"] == 0
+
+
+def _image_labels_supports_multi(conn: sqlite3.Connection) -> bool:
+    if not _table_exists(conn, "image_labels"):
+        return True
+    rows = conn.execute("PRAGMA table_info(image_labels);").fetchall()
+    for row in rows:
+        if row["name"] == "label_option_id":
+            return row["pk"] > 0
+    return False
+
+
+def _migrate_image_labels_multi(conn: sqlite3.Connection) -> None:
+    if not _table_exists(conn, "image_labels"):
+        return
+    if _image_labels_supports_multi(conn):
+        return
+
+    conn.execute("ALTER TABLE image_labels RENAME TO image_labels_legacy")
+    _ensure_schema(conn)
+    conn.execute(
+        """
+        INSERT INTO image_labels
+        (project_id, rel_path, category_id, label_option_id, updated_at)
+        SELECT project_id, rel_path, category_id, label_option_id, updated_at
+        FROM image_labels_legacy
+        """
+    )
+    conn.execute("DROP TABLE IF EXISTS image_labels_legacy")
 
 
 def _migrate_legacy_schema(conn: sqlite3.Connection) -> None:
@@ -263,6 +292,7 @@ def init_db() -> None:
     with get_conn() as conn:
         _ensure_base_schema(conn)
         _migrate_legacy_schema(conn)
+        _migrate_image_labels_multi(conn)
         _ensure_schema(conn)
         _ensure_category_sort_order(conn)
 
@@ -365,7 +395,7 @@ def list_projects(include_storage_dir: bool = False) -> list[dict]:
                 (SELECT COUNT(*) FROM images WHERE project_id = p.id) AS image_count,
                 (SELECT COUNT(DISTINCT rel_path) FROM image_labels WHERE project_id = p.id) AS labeled_count
             FROM projects p
-            ORDER BY p.updated_at DESC
+            ORDER BY p.created_at DESC
             """
         ).fetchall()
 
@@ -415,6 +445,32 @@ def add_images(project_id: int, items: Iterable[tuple[str, str]]) -> None:
         )
 
 
+def image_exists(project_id: int, rel_path: str) -> bool:
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT 1
+            FROM images
+            WHERE project_id = ? AND rel_path = ?
+            """,
+            (project_id, rel_path),
+        ).fetchone()
+        return row is not None
+
+
+def delete_image(project_id: int, rel_path: str) -> None:
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            DELETE FROM images
+            WHERE project_id = ? AND rel_path = ?
+            """,
+            (project_id, rel_path),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Image not found")
+
+
 def list_images(project_id: int) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
@@ -432,7 +488,7 @@ def list_images(project_id: int) -> list[dict]:
             LEFT JOIN label_options
                 ON image_labels.label_option_id = label_options.id
             WHERE images.project_id = ?
-            ORDER BY images.rel_path, image_labels.category_id
+            ORDER BY images.rel_path, image_labels.category_id, image_labels.label_option_id
             """,
             (project_id,),
         ).fetchall()
@@ -651,7 +707,11 @@ def delete_label_option(project_id: int, label_id: int) -> list[dict]:
 
 
 def set_image_label(
-    project_id: int, rel_path: str, category_id: int, label_option_id: int | None
+    project_id: int,
+    rel_path: str,
+    category_id: int,
+    label_option_id: int | None,
+    mode: str = "replace",
 ) -> None:
     now = utc_now()
     with get_conn() as conn:
@@ -685,13 +745,42 @@ def set_image_label(
         if not option:
             raise ValueError("Label option not found")
 
+        if mode not in ("replace", "toggle"):
+            raise ValueError("Invalid label mode")
+
+        if mode == "toggle":
+            existing = conn.execute(
+                """
+                SELECT 1 FROM image_labels
+                WHERE project_id = ? AND rel_path = ? AND category_id = ? AND label_option_id = ?
+                """,
+                (project_id, rel_path, category_id, label_option_id),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    """
+                    DELETE FROM image_labels
+                    WHERE project_id = ? AND rel_path = ? AND category_id = ? AND label_option_id = ?
+                    """,
+                    (project_id, rel_path, category_id, label_option_id),
+                )
+                return
+        else:
+            conn.execute(
+                """
+                DELETE FROM image_labels
+                WHERE project_id = ? AND rel_path = ? AND category_id = ?
+                """,
+                (project_id, rel_path, category_id),
+            )
+
         conn.execute(
             """
             INSERT INTO image_labels
             (project_id, rel_path, category_id, label_option_id, updated_at)
             VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(project_id, rel_path, category_id)
-            DO UPDATE SET label_option_id = excluded.label_option_id, updated_at = excluded.updated_at
+            ON CONFLICT(project_id, rel_path, category_id, label_option_id)
+            DO UPDATE SET updated_at = excluded.updated_at
             """,
             (project_id, rel_path, category_id, label_option_id, now),
         )

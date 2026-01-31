@@ -52,6 +52,7 @@ class LabelUpdate(BaseModel):
     rel_path: str
     category_id: int
     label_option_id: int | None = None
+    mode: str | None = None
 
 
 class PositionUpdate(BaseModel):
@@ -199,9 +200,16 @@ def api_delete_project(project_id: int) -> dict[str, Any]:
 def api_list_images(project_id: int) -> dict[str, Any]:
     project = ensure_project(project_id)
     images = list_images(project_id)
+    storage_dir = project_dir(project)
+    root_path = storage_dir.resolve()
     output = []
+    missing: list[str] = []
     for item in images:
         rel_path = item["rel_path"]
+        full_path = (storage_dir / rel_path).resolve()
+        if not full_path.is_relative_to(root_path) or not full_path.is_file():
+            missing.append(rel_path)
+            continue
         url = f"/api/projects/{project_id}/image?path={urllib.parse.quote(rel_path, safe='')}"
         thumbnail_url = f"{url}&thumbnail=true"
         output.append(
@@ -213,6 +221,13 @@ def api_list_images(project_id: int) -> dict[str, Any]:
                 "thumbnail_url": thumbnail_url,
             }
         )
+
+    if missing:
+        for rel_path in missing:
+            try:
+                delete_image(project_id, rel_path)
+            except ValueError:
+                pass
     return {"images": output, "last_index": project["last_index"]}
 
 
@@ -372,12 +387,16 @@ def api_delete_label_option(project_id: int, payload: LabelDelete) -> dict[str, 
 def api_set_label(project_id: int, payload: LabelUpdate) -> dict[str, Any]:
     ensure_project(project_id)
     rel_path = sanitize_rel_path(payload.rel_path)
+    mode = (payload.mode or "replace").lower()
+    if mode not in ("replace", "toggle"):
+        raise HTTPException(status_code=400, detail="Invalid label mode")
     try:
         set_image_label(
             project_id,
             rel_path,
             payload.category_id,
             payload.label_option_id,
+            mode,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
