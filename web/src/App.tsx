@@ -267,6 +267,8 @@ const App: React.FC = () => {
   const [editingCategoryName, setEditingCategoryName] = useState("");
   const [editingLabelId, setEditingLabelId] = useState<number | null>(null);
   const [editingLabelName, setEditingLabelName] = useState("");
+  const [editingProjectId, setEditingProjectId] = useState<number | null>(null);
+  const [editingProjectName, setEditingProjectName] = useState("");
   const [draggingCategoryId, setDraggingCategoryId] = useState<number | null>(
     null
   );
@@ -1424,6 +1426,40 @@ const App: React.FC = () => {
     }
   }, [categories, selectedProjectId]);
 
+  const cancelProjectEdit = useCallback(() => {
+    setEditingProjectId(null);
+    setEditingProjectName("");
+  }, []);
+
+  const startProjectEdit = useCallback((project: Project) => {
+    setEditingProjectId(project.id);
+    setEditingProjectName(project.name);
+  }, []);
+
+  const handleRenameProject = useCallback(async () => {
+    if (editingProjectId === null) return;
+    const name = editingProjectName.trim();
+    if (!name) {
+      setError("Project name required");
+      return;
+    }
+    try {
+      await fetchJson(`/api/projects/${editingProjectId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name }),
+      });
+      setProjects((prev) =>
+        prev.map((project) =>
+          project.id === editingProjectId ? { ...project, name } : project
+        )
+      );
+      cancelProjectEdit();
+    } catch (err) {
+      console.error(err);
+      setError(err instanceof Error ? err.message : "Failed to rename project");
+    }
+  }, [cancelProjectEdit, editingProjectId, editingProjectName]);
+
   const handleDeleteProject = async (projectId: number) => {
     if (
       !confirm(
@@ -1457,28 +1493,104 @@ const App: React.FC = () => {
         className={`list-item ${
           project.id === selectedProjectId ? "active" : ""
         }`}
-        onClick={() => setSelectedProjectId(project.id)}
+        onClick={() => {
+          if (editingProjectId !== project.id) {
+            setSelectedProjectId(project.id);
+          }
+        }}
       >
         <div className="list-content">
-          <div className="list-name">{project.name}</div>
-          <div className="project-meta">
-            {project.labeled_count}/{project.image_count}
+          <div className="list-name">
+            {editingProjectId === project.id ? (
+              <input
+                className="project-inline-input"
+                value={editingProjectName}
+                onChange={(event) => setEditingProjectName(event.target.value)}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    handleRenameProject();
+                  }
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    cancelProjectEdit();
+                  }
+                }}
+                autoFocus
+              />
+            ) : (
+              project.name
+            )}
           </div>
+          {editingProjectId !== project.id && (
+            <div className="project-meta">
+              {project.labeled_count}/{project.image_count}
+            </div>
+          )}
         </div>
-        <button
-          className="btn-icon delete-project"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDeleteProject(project.id);
-          }}
-          type="button"
-          title="Delete project"
-        >
-          ×
-        </button>
+        <div className="project-actions">
+          {editingProjectId === project.id ? (
+            <>
+              <button
+                className="btn small"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleRenameProject();
+                }}
+                type="button"
+              >
+                Save
+              </button>
+              <button
+                className="btn ghost small"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  cancelProjectEdit();
+                }}
+                type="button"
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                className="btn-icon edit-project"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  startProjectEdit(project);
+                }}
+                type="button"
+                title="Rename project"
+              >
+                ✎
+              </button>
+              <button
+                className="btn-icon delete-project"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  handleDeleteProject(project.id);
+                }}
+                type="button"
+                title="Delete project"
+              >
+                ×
+              </button>
+            </>
+          )}
+        </div>
       </div>
     ));
-  }, [projects, selectedProjectId]);
+  }, [
+    cancelProjectEdit,
+    editingProjectId,
+    editingProjectName,
+    handleRenameProject,
+    projects,
+    selectedProjectId,
+    startProjectEdit,
+  ]);
 
   const labelCounts = useMemo(() => {
     const counts = new Map<number, number>();

@@ -31,6 +31,7 @@ from .db import (
     update_category,
     update_label_option,
     update_project_index,
+    update_project_name,
 )
 from .utils import THUMBNAIL_DIR_NAME, generate_thumbnail, get_thumbnail_path
 from .watchers import SUPPORTED_EXTENSIONS, UploadWatcher
@@ -57,6 +58,10 @@ class LabelUpdate(BaseModel):
 
 class PositionUpdate(BaseModel):
     index: int
+
+
+class ProjectRename(BaseModel):
+    name: str
 
 
 class CategoryCreate(BaseModel):
@@ -193,6 +198,20 @@ def api_delete_project(project_id: int) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Project not found")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+    return {"ok": True}
+
+
+@app.patch("/api/projects/{project_id}")
+def api_rename_project(project_id: int, payload: ProjectRename) -> dict[str, Any]:
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Project name required")
+    try:
+        update_project_name(project_id, name)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Project not found")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
 
 

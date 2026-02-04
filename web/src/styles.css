@@ -190,10 +190,33 @@ body {
   white-space: nowrap;
 }
 
+.project-inline-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(31, 27, 22, 0.12);
+  font-family: inherit;
+  font-size: 12px;
+  background: #fff;
+}
+
+.project-inline-input:focus {
+  outline: 2px solid rgba(249, 115, 22, 0.4);
+  border-color: rgba(249, 115, 22, 0.6);
+}
+
 .project-meta {
   font-size: 11px;
   color: var(--muted);
   font-weight: 600;
+}
+
+.project-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .pill {
@@ -834,6 +857,17 @@ body {
   line-height: 1;
   opacity: 0;
   transition: opacity 0.2s ease;
+}
+
+.edit-project {
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.list-item:hover .edit-project {
+  opacity: 1;
 }
 
 .list-item:hover .delete-project {

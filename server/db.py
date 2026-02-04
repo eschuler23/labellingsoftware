@@ -421,6 +421,21 @@ def update_project_index(project_id: int, index: int) -> None:
         )
 
 
+def update_project_name(project_id: int, name: str) -> None:
+    now = utc_now()
+    with get_conn() as conn:
+        cur = conn.execute(
+            """
+            UPDATE projects
+            SET name = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (name, now, project_id),
+        )
+        if cur.rowcount == 0:
+            raise ValueError("Project not found")
+
+
 def add_image(project_id: int, rel_path: str, filename: str) -> None:
     now = utc_now()
     with get_conn() as conn:
