@@ -79,14 +79,27 @@ const escapeCsv = (value: string) => {
   return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
 };
 
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
 const buildLabelKey = (categoryName: string, labelName: string) =>
   `${categoryName}${LABEL_KEY_SEPARATOR}${labelName}`;
 
-const buildCsvForProjects = (
+type ExportTable = {
+  header: string[];
+  rows: string[][];
+};
+
+const buildExportTable = (
   projects: ExportProjectData[],
   selectedLabelKeys: Set<string>,
   onlySelected: boolean
-) => {
+): ExportTable => {
   const hasSelection = selectedLabelKeys.size > 0;
   const selectedCategoryNames = new Set<string>();
 
@@ -125,7 +138,7 @@ const buildCsvForProjects = (
     ...categoryNames,
   ];
 
-  const rows: string[] = [];
+  const rows: string[][] = [];
 
   projects.forEach((project) => {
     const categoryNameById = new Map<number, string>();
@@ -165,24 +178,18 @@ const buildCsvForProjects = (
         ...(includeProject ? [project.name] : []),
         item.rel_path,
         ...values,
-      ]
-        .map(escapeCsv)
-        .join(",");
+      ];
       rows.push(row);
     });
   });
 
-  return [header.map(escapeCsv).join(","), ...rows].join("\n");
+  return { header, rows };
 };
 
-const downloadText = (filename: string, text: string) => {
-  const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
+const buildCsvFromTable = (table: ExportTable) => {
+  const header = table.header.map(escapeCsv).join(",");
+  const rows = table.rows.map((row) => row.map(escapeCsv).join(","));
+  return [header, ...rows].join("\n");
 };
 
 const fetchJson = async <T,>(
@@ -206,6 +213,191 @@ const fetchJson = async <T,>(
   }
 
   return (await res.json()) as T;
+};
+
+const serializeForScript = (value: string) =>
+  JSON.stringify(value).replace(/<\/script>/gi, "<\\/script>");
+
+const buildPreviewHtml = (
+  table: ExportTable,
+  filename: string,
+  csv: string
+) => {
+  const columnCount = Math.max(table.header.length, 1);
+  const headerHtml = table.header
+    .map((cell) => `<th>${escapeHtml(cell)}</th>`)
+    .join("");
+  const bodyHtml = table.rows.length
+    ? table.rows
+        .map(
+          (row) =>
+            `<tr>${row
+              .map((cell) => `<td>${escapeHtml(cell)}</td>`)
+              .join("")}</tr>`
+        )
+        .join("")
+    : `<tr><td class="empty" colspan="${columnCount}">No rows to export.</td></tr>`;
+  const csvValue = serializeForScript(csv);
+  const filenameValue = serializeForScript(filename);
+  const filenameHtml = escapeHtml(filename);
+  const rowCount = table.rows.length.toLocaleString();
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CSV Preview</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+      body {
+        font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+        margin: 0;
+        background: #f8f4ee;
+        color: #1f1b16;
+      }
+      .toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 16px 24px;
+        background: #fff;
+        border-bottom: 1px solid rgba(31, 27, 22, 0.1);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+      .toolbar h1 {
+        font-size: 18px;
+        margin: 0;
+      }
+      .toolbar .meta {
+        font-size: 12px;
+        color: #6d645b;
+      }
+      .toolbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .filename-input {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 11px;
+        color: #6d645b;
+      }
+      .filename-input input {
+        min-width: 220px;
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(31, 27, 22, 0.12);
+        font-size: 12px;
+        font-family: inherit;
+      }
+      .btn {
+        border: 1px solid rgba(31, 27, 22, 0.12);
+        background: #fff;
+        padding: 8px 14px;
+        border-radius: 10px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .btn.primary {
+        background: linear-gradient(135deg, #f97316, #ea580c);
+        color: #fff;
+        border-color: transparent;
+      }
+      .table-wrap {
+        padding: 16px 24px 32px;
+        overflow: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 12px 24px rgba(31, 27, 22, 0.08);
+      }
+      th,
+      td {
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(31, 27, 22, 0.08);
+        text-align: left;
+        font-size: 13px;
+        vertical-align: top;
+        word-break: break-word;
+      }
+      th {
+        background: #f5ede3;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      tr:nth-child(even) td {
+        background: #fcfaf7;
+      }
+      .empty {
+        text-align: center;
+        color: #6d645b;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="toolbar">
+      <div>
+        <h1>CSV Preview</h1>
+        <div class="meta">Rows: ${rowCount}</div>
+      </div>
+      <div class="toolbar-actions">
+        <label class="filename-input">
+          <span>Filename</span>
+          <input id="filename" value="${filenameHtml}" />
+        </label>
+        <button class="btn primary" id="download">Download CSV</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>${headerHtml}</tr>
+        </thead>
+        <tbody>
+          ${bodyHtml}
+        </tbody>
+      </table>
+    </div>
+    <script>
+      const csvData = ${csvValue};
+      const filename = ${filenameValue};
+      const filenameInput = document.getElementById("filename");
+      const downloadBtn = document.getElementById("download");
+      downloadBtn.addEventListener("click", () => {
+        let nextName = filenameInput && "value" in filenameInput
+          ? String(filenameInput.value || "").trim()
+          : "";
+        if (!nextName) {
+          nextName = filename;
+        }
+        if (nextName && !nextName.toLowerCase().endsWith(".csv")) {
+          nextName = nextName + ".csv";
+        }
+        const blob = new Blob([csvData], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = nextName || "labels.csv";
+        link.click();
+        URL.revokeObjectURL(url);
+      });
+    </script>
+  </body>
+</html>`;
 };
 
 const groupFilesByRoot = (files: File[]) => {
@@ -1032,6 +1224,28 @@ const App: React.FC = () => {
     );
     if (!exportProjects.length) return;
 
+    const previewWindow = window.open("", "_blank");
+    if (!previewWindow) {
+      setError("Popup blocked. Allow popups to preview the CSV.");
+      return;
+    }
+    previewWindow.document.write(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CSV Preview</title>
+    <style>
+      body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif; padding: 24px; }
+    </style>
+  </head>
+  <body>
+    <h1>Preparing CSV preview...</h1>
+    <p>Please keep this tab open.</p>
+  </body>
+</html>`);
+    previewWindow.document.close();
+
     setExporting(true);
     setError(null);
     try {
@@ -1052,15 +1266,32 @@ const App: React.FC = () => {
         })
       );
 
-      const csv = buildCsvForProjects(
-        data,
-        exportLabelKeys,
-        exportOnlySelected
-      );
+      const table = buildExportTable(data, exportLabelKeys, exportOnlySelected);
+      const csv = buildCsvFromTable(table);
       const filename = data.length > 1 ? "labels_multi.csv" : "labels.csv";
-      downloadText(filename, csv);
+      if (!previewWindow.closed) {
+        previewWindow.document.open();
+        previewWindow.document.write(buildPreviewHtml(table, filename, csv));
+        previewWindow.document.close();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to export CSV");
+      if (!previewWindow.closed) {
+        previewWindow.document.open();
+        previewWindow.document.write(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CSV Preview Failed</title>
+  </head>
+  <body>
+    <h1>Failed to build CSV preview</h1>
+    <p>${escapeHtml(err instanceof Error ? err.message : String(err))}</p>
+  </body>
+</html>`);
+        previewWindow.document.close();
+      }
     } finally {
       setExporting(false);
     }
@@ -1785,8 +2016,8 @@ const App: React.FC = () => {
             type="button"
           >
             {exporting
-              ? "Exporting..."
-              : `Export CSV${exportProjectIds.size > 1 ? " (" + exportProjectIds.size + ")" : ""}`}
+              ? "Preparing preview..."
+              : `Preview CSV${exportProjectIds.size > 1 ? " (" + exportProjectIds.size + ")" : ""}`}
           </button>
         </div>
       </header>
