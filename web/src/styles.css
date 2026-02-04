@@ -551,6 +551,52 @@ body {
   align-items: center;
 }
 
+.section-header,
+.preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.section-header .label-actions,
+.preview-header .label-actions {
+  flex-wrap: wrap;
+}
+
+.preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.collapse-icon {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px;
+  cursor: pointer;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.collapse-icon:hover,
+.collapse-icon:focus-visible {
+  color: var(--ink);
+}
+
+.collapse-icon.collapsed {
+  transform: rotate(-90deg);
+}
+
 .label-inline-input {
   flex: 1;
   min-width: 160px;
@@ -585,6 +631,14 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+
+.export-projects-header .section-title,
+.export-header .section-title {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
 
 .export-project-list {
@@ -677,6 +731,61 @@ body {
   display: flex;
   gap: 12px;
   align-items: center;
+}
+
+.nav-row-icons {
+  justify-content: center;
+  gap: 9px;
+  margin: 4px 0 3px;
+}
+
+.nav-icon {
+  position: relative;
+  border: none;
+  background: transparent;
+  color: #b7afa4;
+  font-size: 16px;
+  padding: 4px 7px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.nav-icon::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 50%;
+  bottom: -26px;
+  transform: translate(-50%, 4px);
+  background: #1f1b16;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 2;
+}
+
+.nav-icon:hover:not(:disabled),
+.nav-icon:focus-visible:not(:disabled) {
+  color: var(--ink);
+  background: rgba(31, 27, 22, 0.05);
+  transform: translateY(-1px);
+}
+
+.nav-icon:hover:not(:disabled)::after,
+.nav-icon:focus-visible:not(:disabled)::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.nav-icon:disabled {
+  cursor: not-allowed;
+  color: #d7d0c7;
 }
 
 .btn {
@@ -829,6 +938,11 @@ body {
   .nav-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .nav-row-icons {
+    flex-direction: row;
+    align-items: center;
   }
 }
 

@@ -24,6 +24,7 @@ from .db import (
     image_exists,
     init_db,
     list_images,
+    list_label_counts,
     list_label_schema,
     list_projects,
     set_image_label,
@@ -316,6 +317,12 @@ def api_delete_image(project_id: int, path: str) -> dict[str, Any]:
 def api_label_schema(project_id: int) -> dict[str, Any]:
     ensure_project(project_id)
     return {"categories": list_label_schema(project_id)}
+
+
+@app.get("/api/projects/{project_id}/label-counts")
+def api_label_counts(project_id: int) -> dict[str, Any]:
+    ensure_project(project_id)
+    return list_label_counts(project_id)
 
 
 @app.post("/api/projects/{project_id}/label-categories")

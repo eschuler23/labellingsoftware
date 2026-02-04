@@ -62,11 +62,35 @@ type LabelSchemaResponse = {
   categories: LabelCategory[];
 };
 
+type LabelCountEntry = {
+  category_id: number;
+  category_name: string;
+  label_id: number;
+  label_name: string;
+  count: number;
+};
+
+type CategoryCountEntry = {
+  category_id: number;
+  category_name: string;
+  count: number;
+};
+
+type LabelCountsResponse = {
+  labels: LabelCountEntry[];
+  categories: CategoryCountEntry[];
+};
+
 type ExportProjectData = {
   id: number;
   name: string;
   images: ImageItem[];
   categories: LabelCategory[];
+};
+
+type ProjectCounts = {
+  labelCounts: Map<string, number>;
+  categoryCounts: Map<string, number>;
 };
 
 const isSupported = (file: File) => {
@@ -437,12 +461,65 @@ const normalizeImages = (items: ImagesResponse["images"]): ImageItem[] => {
   });
 };
 
+const buildProjectCountsFromImages = (
+  items: ImageItem[],
+  categories: LabelCategory[]
+): ProjectCounts => {
+  const categoryNameById = new Map<number, string>();
+  categories.forEach((category) => {
+    categoryNameById.set(category.id, category.name);
+  });
+
+  const labelCounts = new Map<string, number>();
+  const categoryCounts = new Map<string, number>();
+
+  items.forEach((item) => {
+    Object.entries(item.labels).forEach(([catIdStr, labels]) => {
+      const categoryId = Number(catIdStr);
+      const categoryName = categoryNameById.get(categoryId);
+      if (!categoryName) return;
+      categoryCounts.set(
+        categoryName,
+        (categoryCounts.get(categoryName) || 0) + 1
+      );
+      labels.forEach((label) => {
+        const key = buildLabelKey(categoryName, label.label_name);
+        labelCounts.set(key, (labelCounts.get(key) || 0) + 1);
+      });
+    });
+  });
+
+  return { labelCounts, categoryCounts };
+};
+
+const buildProjectCountsFromResponse = (
+  response: LabelCountsResponse
+): ProjectCounts => {
+  const labelCounts = new Map<string, number>();
+  const categoryCounts = new Map<string, number>();
+
+  response.labels.forEach((row) => {
+    const key = buildLabelKey(row.category_name, row.label_name);
+    labelCounts.set(key, (labelCounts.get(key) || 0) + row.count);
+  });
+
+  response.categories.forEach((row) => {
+    categoryCounts.set(
+      row.category_name,
+      (categoryCounts.get(row.category_name) || 0) + row.count
+    );
+  });
+
+  return { labelCounts, categoryCounts };
+};
+
 const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(
     null
   );
   const [images, setImages] = useState<ImageItem[]>([]);
+  const [imagesProjectId, setImagesProjectId] = useState<number | null>(null);
   const [categories, setCategories] = useState<LabelCategory[]>([]);
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
   const [activeCategoryName, setActiveCategoryName] = useState<string | null>(
@@ -467,6 +544,11 @@ const App: React.FC = () => {
   const [dragOverCategoryId, setDragOverCategoryId] = useState<number | null>(
     null
   );
+  const [manageCollapsed, setManageCollapsed] = useState(false);
+  const [exportProjectsCollapsed, setExportProjectsCollapsed] = useState(false);
+  const [exportSelectionCollapsed, setExportSelectionCollapsed] =
+    useState(false);
+  const [previewCollapsed, setPreviewCollapsed] = useState(false);
   const [exportLabelKeys, setExportLabelKeys] = useState<Set<string>>(
     new Set()
   );
@@ -474,6 +556,9 @@ const App: React.FC = () => {
   const [exportProjectIds, setExportProjectIds] = useState<Set<number>>(
     new Set()
   );
+  const [exportCountsByProject, setExportCountsByProject] = useState<
+    Map<number, ProjectCounts>
+  >(new Map());
   const [exportProjectsTouched, setExportProjectsTouched] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [deletingImage, setDeletingImage] = useState(false);
@@ -570,6 +655,7 @@ const App: React.FC = () => {
 
         const normalized = normalizeImages(imagesRes.images);
         setImages(normalized);
+        setImagesProjectId(projectId);
         updateProjectCounts(projectId, normalized);
         setCategories(schemaRes.categories);
         const safeIndex = Math.min(
@@ -751,6 +837,7 @@ const App: React.FC = () => {
       );
       const normalized = normalizeImages(imagesRes.images);
       setImages(normalized);
+      setImagesProjectId(selectedProjectId);
       updateProjectCounts(selectedProjectId, normalized);
       setCurrentIndex((prev) =>
         Math.min(prev, Math.max(normalized.length - 1, 0))
@@ -1328,6 +1415,7 @@ const App: React.FC = () => {
       );
       const normalized = normalizeImages(imagesRes.images);
       setImages(normalized);
+      setImagesProjectId(selectedProjectId);
       updateProjectCounts(selectedProjectId, normalized);
       if (normalized.length === 0) {
         setCurrentIndex(0);
@@ -1708,6 +1796,7 @@ const App: React.FC = () => {
       if (selectedProjectId === projectId) {
         setSelectedProjectId(null);
         setImages([]);
+        setImagesProjectId(null);
         setCategories([]);
       }
     } catch (err) {
@@ -1836,16 +1925,72 @@ const App: React.FC = () => {
     return counts;
   }, [images]);
 
-  const categoryCounts = useMemo(() => {
-    const counts = new Map<number, number>();
-    images.forEach((item) => {
-      Object.keys(item.labels).forEach((catIdStr) => {
-        const catId = Number(catIdStr);
-        counts.set(catId, (counts.get(catId) || 0) + 1);
+  useEffect(() => {
+    if (imagesProjectId === null) return;
+    const counts = buildProjectCountsFromImages(images, categories);
+    setExportCountsByProject((prev) => {
+      const next = new Map(prev);
+      next.set(imagesProjectId, counts);
+      return next;
+    });
+  }, [categories, images, imagesProjectId]);
+
+  useEffect(() => {
+    if (!exportProjectIds.size) return;
+    const missing = Array.from(exportProjectIds).filter(
+      (projectId) => !exportCountsByProject.has(projectId)
+    );
+    if (!missing.length) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const results = await Promise.all(
+          missing.map(async (projectId) => {
+            const response = await fetchJson<LabelCountsResponse>(
+              `/api/projects/${projectId}/label-counts`
+            );
+            return {
+              projectId,
+              counts: buildProjectCountsFromResponse(response),
+            };
+          })
+        );
+        if (cancelled) return;
+        setExportCountsByProject((prev) => {
+          const next = new Map(prev);
+          results.forEach(({ projectId, counts }) => {
+            next.set(projectId, counts);
+          });
+          return next;
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setError(
+          err instanceof Error ? err.message : "Failed to load export counts"
+        );
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [exportCountsByProject, exportProjectIds]);
+
+  const exportCounts = useMemo(() => {
+    const labelCounts = new Map<string, number>();
+    const categoryCounts = new Map<string, number>();
+    exportProjectIds.forEach((projectId) => {
+      const counts = exportCountsByProject.get(projectId);
+      if (!counts) return;
+      counts.labelCounts.forEach((value, key) => {
+        labelCounts.set(key, (labelCounts.get(key) || 0) + value);
+      });
+      counts.categoryCounts.forEach((value, key) => {
+        categoryCounts.set(key, (categoryCounts.get(key) || 0) + value);
       });
     });
-    return counts;
-  }, [images]);
+    return { labelCounts, categoryCounts };
+  }, [exportCountsByProject, exportProjectIds]);
 
   const labelPanelCategories = useMemo(() => {
     if (!categories.length || activeCategoryId === null) {
@@ -2116,35 +2261,104 @@ const App: React.FC = () => {
                 />
               </div>
 
+              <div className="nav-row nav-row-icons">
+                <button
+                  className="nav-icon"
+                  onClick={goPrev}
+                  disabled={currentIndex <= 0}
+                  type="button"
+                  title="Previous"
+                  data-label="Previous"
+                  aria-label="Previous"
+                >
+                  ◀
+                </button>
+                <button
+                  className="nav-icon"
+                  onClick={skip}
+                  disabled={currentIndex >= images.length - 1}
+                  type="button"
+                  title="Skip"
+                  data-label="Skip"
+                  aria-label="Skip"
+                >
+                  ⏭
+                </button>
+                <button
+                  className="nav-icon"
+                  onClick={goNext}
+                  disabled={currentIndex >= images.length - 1}
+                  type="button"
+                  title="Next"
+                  data-label="Next"
+                  aria-label="Next"
+                >
+                  ▶
+                </button>
+              </div>
+
               {filteredIndexes.length > 0 ? (
-                <div className="preview-strip">
-                  {filteredIndexes.map((index) => {
-                    const item = images[index];
-                    const active = index === currentIndex;
-                    const isLabeled = Object.keys(item.labels).length > 0;
-                    return (
+                <div className="preview-section">
+                <div className="preview-header">
+                    <div className="section-title-row">
+                      <div className="section-title">Image Previews</div>
                       <button
-                        key={item.rel_path}
-                        className={`preview-thumb ${active ? "active" : ""}`}
-                        onClick={() => setCurrentIndex(index)}
+                        className={`collapse-icon${
+                          previewCollapsed ? " collapsed" : ""
+                        }`}
+                        onClick={() => setPreviewCollapsed((prev) => !prev)}
                         type="button"
+                        aria-expanded={!previewCollapsed}
+                        aria-label={
+                          previewCollapsed
+                            ? "Expand image previews"
+                            : "Collapse image previews"
+                        }
+                        title={
+                          previewCollapsed
+                            ? "Expand image previews"
+                            : "Collapse image previews"
+                        }
                       >
-                        <img
-                          src={item.thumbnail_url}
-                          alt={item.filename}
-                          loading="lazy"
-                        />
-                        <span
-                          className={`thumb-overlay ${
-                            isLabeled ? "labeled" : ""
-                          }`}
-                          aria-hidden="true"
-                        >
-                          <span className="thumb-overlay-label">labeled</span>
-                        </span>
+                        ⌄
                       </button>
-                    );
-                  })}
+                    </div>
+                  </div>
+                  {!previewCollapsed ? (
+                    <div className="preview-strip">
+                      {filteredIndexes.map((index) => {
+                        const item = images[index];
+                        const active = index === currentIndex;
+                        const isLabeled = Object.keys(item.labels).length > 0;
+                        return (
+                          <button
+                            key={item.rel_path}
+                            className={`preview-thumb ${
+                              active ? "active" : ""
+                            }`}
+                            onClick={() => setCurrentIndex(index)}
+                            type="button"
+                          >
+                            <img
+                              src={item.thumbnail_url}
+                              alt={item.filename}
+                              loading="lazy"
+                            />
+                            <span
+                              className={`thumb-overlay ${
+                                isLabeled ? "labeled" : ""
+                              }`}
+                              aria-hidden="true"
+                            >
+                              <span className="thumb-overlay-label">
+                                labeled
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -2240,166 +2454,102 @@ const App: React.FC = () => {
               </div>
 
               <div className="label-manage">
-                <div className="section-title">Manage Categories & Labels</div>
-                <div className="label-actions" style={{ marginBottom: "1rem" }}>
-                  <button
-                    className="btn ghost small"
-                    onClick={handleCopySchema}
-                    type="button"
-                  >
-                    Copy Schema
-                  </button>
-                  <button
-                    className="btn ghost small"
-                    onClick={handlePasteSchema}
-                    type="button"
-                  >
-                    Paste Schema
-                  </button>
-                </div>
-                {categories.map((category) => (
-                  <div
-                    key={category.id}
-                    className={`manage-category${
-                      draggingCategoryId === category.id ? " dragging" : ""
-                    }${dragOverCategoryId === category.id ? " drag-over" : ""}`}
-                    onDragOver={handleCategoryDragOver}
-                    onDragEnter={() => handleCategoryDragEnter(category.id)}
-                    onDrop={(event) => handleCategoryDrop(event, category.id)}
-                  >
-                    <div
-                      className="manage-category-header"
-                      draggable
-                      onDragStart={(event) =>
-                        handleCategoryDragStart(event, category.id)
+                <div className="section-header">
+                  <div className="section-title-row">
+                    <div className="section-title">
+                      Manage Categories & Labels
+                    </div>
+                    <button
+                      className={`collapse-icon${
+                        manageCollapsed ? " collapsed" : ""
+                      }`}
+                      onClick={() => setManageCollapsed((prev) => !prev)}
+                      type="button"
+                      aria-expanded={!manageCollapsed}
+                      aria-label={
+                        manageCollapsed
+                          ? "Expand manage categories"
+                          : "Collapse manage categories"
                       }
-                      onDragEnd={handleCategoryDragEnd}
-                      title="Drag to reorder categories"
+                      title={
+                        manageCollapsed
+                          ? "Expand manage categories"
+                          : "Collapse manage categories"
+                      }
                     >
-                      {editingCategoryId === category.id ? (
-                        <input
-                          className="label-inline-input"
-                          value={editingCategoryName}
-                          onChange={(event) =>
-                            setEditingCategoryName(event.target.value)
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              handleRenameCategory();
-                            }
-                            if (event.key === "Escape") {
-                              setEditingCategoryId(null);
-                              setEditingCategoryName("");
-                            }
-                          }}
-                        />
-                      ) : (
-                        <span className="label-name">{category.name}</span>
-                      )}
-                      <div className="label-actions">
-                        {editingCategoryId === category.id ? (
-                          <>
-                            <button
-                              className="btn small"
-                              onClick={handleRenameCategory}
-                              type="button"
-                            >
-                              Save
-                            </button>
-                            <button
-                              className="btn ghost small"
-                              onClick={() => {
-                                setEditingCategoryId(null);
-                                setEditingCategoryName("");
-                              }}
-                              type="button"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <button
-                              className="btn ghost small"
-                              onClick={() => {
-                                setEditingCategoryId(category.id);
-                                setEditingCategoryName(category.name);
-                              }}
-                              type="button"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              className="btn ghost small"
-                              onClick={() => handleDeleteCategory(category.id)}
-                              type="button"
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="manage-label-add">
-                      <input
-                        className="label-input"
-                        value={newLabelByCategory[category.id] || ""}
-                        onChange={(event) =>
-                          setNewLabelByCategory((prev) => ({
-                            ...prev,
-                            [category.id]: event.target.value,
-                          }))
+                      ⌄
+                    </button>
+                  </div>
+                  <div className="label-actions">
+                    <button
+                      className="btn ghost small"
+                      onClick={handleCopySchema}
+                      type="button"
+                    >
+                      Copy Schema
+                    </button>
+                    <button
+                      className="btn ghost small"
+                      onClick={handlePasteSchema}
+                      type="button"
+                    >
+                      Paste Schema
+                    </button>
+                  </div>
+                </div>
+                {!manageCollapsed
+                  ? categories.map((category) => (
+                      <div
+                        key={category.id}
+                        className={`manage-category${
+                          draggingCategoryId === category.id ? " dragging" : ""
+                        }${
+                          dragOverCategoryId === category.id ? " drag-over" : ""
+                        }`}
+                        onDragOver={handleCategoryDragOver}
+                        onDragEnter={() =>
+                          handleCategoryDragEnter(category.id)
                         }
-                        placeholder={`Add label to ${category.name}`}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter") {
-                            event.preventDefault();
-                            handleAddLabel(category.id);
-                          }
-                        }}
-                      />
-                      <button
-                        className="btn"
-                        onClick={() => handleAddLabel(category.id)}
-                        disabled={!newLabelByCategory[category.id]?.trim()}
-                        type="button"
+                        onDrop={(event) =>
+                          handleCategoryDrop(event, category.id)
+                        }
                       >
-                        Add Label
-                      </button>
-                    </div>
-
-                    <div className="manage-label-list">
-                      {category.labels.map((label) => (
-                        <div key={label.id} className="label-item">
-                          {editingLabelId === label.id ? (
+                        <div
+                          className="manage-category-header"
+                          draggable
+                          onDragStart={(event) =>
+                            handleCategoryDragStart(event, category.id)
+                          }
+                          onDragEnd={handleCategoryDragEnd}
+                          title="Drag to reorder categories"
+                        >
+                          {editingCategoryId === category.id ? (
                             <input
                               className="label-inline-input"
-                              value={editingLabelName}
+                              value={editingCategoryName}
                               onChange={(event) =>
-                                setEditingLabelName(event.target.value)
+                                setEditingCategoryName(event.target.value)
                               }
                               onKeyDown={(event) => {
                                 if (event.key === "Enter") {
                                   event.preventDefault();
-                                  handleRenameLabel();
+                                  handleRenameCategory();
                                 }
                                 if (event.key === "Escape") {
-                                  setEditingLabelId(null);
-                                  setEditingLabelName("");
+                                  setEditingCategoryId(null);
+                                  setEditingCategoryName("");
                                 }
                               }}
                             />
                           ) : (
-                            <span className="label-name">{label.name}</span>
+                            <span className="label-name">{category.name}</span>
                           )}
                           <div className="label-actions">
-                            {editingLabelId === label.id ? (
+                            {editingCategoryId === category.id ? (
                               <>
                                 <button
                                   className="btn small"
-                                  onClick={handleRenameLabel}
+                                  onClick={handleRenameCategory}
                                   type="button"
                                 >
                                   Save
@@ -2407,8 +2557,8 @@ const App: React.FC = () => {
                                 <button
                                   className="btn ghost small"
                                   onClick={() => {
-                                    setEditingLabelId(null);
-                                    setEditingLabelName("");
+                                    setEditingCategoryId(null);
+                                    setEditingCategoryName("");
                                   }}
                                   type="button"
                                 >
@@ -2420,8 +2570,8 @@ const App: React.FC = () => {
                                 <button
                                   className="btn ghost small"
                                   onClick={() => {
-                                    setEditingLabelId(label.id);
-                                    setEditingLabelName(label.name);
+                                    setEditingCategoryId(category.id);
+                                    setEditingCategoryName(category.name);
                                   }}
                                   type="button"
                                 >
@@ -2429,7 +2579,9 @@ const App: React.FC = () => {
                                 </button>
                                 <button
                                   className="btn ghost small"
-                                  onClick={() => handleDeleteLabel(label.id)}
+                                  onClick={() =>
+                                    handleDeleteCategory(category.id)
+                                  }
                                   type="button"
                                 >
                                   Delete
@@ -2438,16 +2590,138 @@ const App: React.FC = () => {
                             )}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+
+                        <div className="manage-label-add">
+                          <input
+                            className="label-input"
+                            value={newLabelByCategory[category.id] || ""}
+                            onChange={(event) =>
+                              setNewLabelByCategory((prev) => ({
+                                ...prev,
+                                [category.id]: event.target.value,
+                              }))
+                            }
+                            placeholder={`Add label to ${category.name}`}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter") {
+                                event.preventDefault();
+                                handleAddLabel(category.id);
+                              }
+                            }}
+                          />
+                          <button
+                            className="btn"
+                            onClick={() => handleAddLabel(category.id)}
+                            disabled={!newLabelByCategory[category.id]?.trim()}
+                            type="button"
+                          >
+                            Add Label
+                          </button>
+                        </div>
+
+                        <div className="manage-label-list">
+                          {category.labels.map((label) => (
+                            <div key={label.id} className="label-item">
+                              {editingLabelId === label.id ? (
+                                <input
+                                  className="label-inline-input"
+                                  value={editingLabelName}
+                                  onChange={(event) =>
+                                    setEditingLabelName(event.target.value)
+                                  }
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      handleRenameLabel();
+                                    }
+                                    if (event.key === "Escape") {
+                                      setEditingLabelId(null);
+                                      setEditingLabelName("");
+                                    }
+                                  }}
+                                />
+                              ) : (
+                                <span className="label-name">{label.name}</span>
+                              )}
+                              <div className="label-actions">
+                                {editingLabelId === label.id ? (
+                                  <>
+                                    <button
+                                      className="btn small"
+                                      onClick={handleRenameLabel}
+                                      type="button"
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      className="btn ghost small"
+                                      onClick={() => {
+                                        setEditingLabelId(null);
+                                        setEditingLabelName("");
+                                      }}
+                                      type="button"
+                                    >
+                                      Cancel
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button
+                                      className="btn ghost small"
+                                      onClick={() => {
+                                        setEditingLabelId(label.id);
+                                        setEditingLabelName(label.name);
+                                      }}
+                                      type="button"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      className="btn ghost small"
+                                      onClick={() => handleDeleteLabel(label.id)}
+                                      type="button"
+                                    >
+                                      Delete
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))
+                  : null}
               </div>
 
               <div className="export-panel">
                 <div className="export-projects">
                   <div className="export-projects-header">
-                    <div className="section-title">Export Projects</div>
+                    <div className="section-title-row">
+                      <div className="section-title">Export Projects</div>
+                      <button
+                        className={`collapse-icon${
+                          exportProjectsCollapsed ? " collapsed" : ""
+                        }`}
+                        onClick={() =>
+                          setExportProjectsCollapsed((prev) => !prev)
+                        }
+                        type="button"
+                        aria-expanded={!exportProjectsCollapsed}
+                        aria-label={
+                          exportProjectsCollapsed
+                            ? "Expand export projects"
+                            : "Collapse export projects"
+                        }
+                        title={
+                          exportProjectsCollapsed
+                            ? "Expand export projects"
+                            : "Collapse export projects"
+                        }
+                      >
+                        ⌄
+                      </button>
+                    </div>
                     <div className="label-actions">
                       <button
                         className="btn ghost small"
@@ -2465,21 +2739,50 @@ const App: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                  <div className="export-project-list">
-                    {projects.map((project) => (
-                      <label key={project.id} className="checkbox export-project">
-                        <input
-                          type="checkbox"
-                          checked={exportProjectIds.has(project.id)}
-                          onChange={() => toggleExportProject(project.id)}
-                        />
-                        <span>{project.name}</span>
-                      </label>
-                    ))}
-                  </div>
+                  {!exportProjectsCollapsed ? (
+                    <div className="export-project-list">
+                      {projects.map((project) => (
+                        <label
+                          key={project.id}
+                          className="checkbox export-project"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={exportProjectIds.has(project.id)}
+                            onChange={() => toggleExportProject(project.id)}
+                          />
+                          <span>{project.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
                 <div className="export-header">
-                  <div className="section-title">Export Selection</div>
+                  <div className="section-title-row">
+                    <div className="section-title">Export Selection</div>
+                    <button
+                      className={`collapse-icon${
+                        exportSelectionCollapsed ? " collapsed" : ""
+                      }`}
+                      onClick={() =>
+                        setExportSelectionCollapsed((prev) => !prev)
+                      }
+                      type="button"
+                      aria-expanded={!exportSelectionCollapsed}
+                      aria-label={
+                        exportSelectionCollapsed
+                          ? "Expand export selection"
+                          : "Collapse export selection"
+                      }
+                      title={
+                        exportSelectionCollapsed
+                          ? "Expand export selection"
+                          : "Collapse export selection"
+                      }
+                    >
+                      ⌄
+                    </button>
+                  </div>
                   <div className="label-actions">
                     <button
                       className="btn ghost small"
@@ -2497,80 +2800,63 @@ const App: React.FC = () => {
                     </button>
                   </div>
                 </div>
-                <label className="checkbox export-toggle">
-                  <input
-                    type="checkbox"
-                    checked={exportOnlySelected}
-                    onChange={(event) =>
-                      setExportOnlySelected(event.target.checked)
-                    }
-                  />
-                  <span>Only export images that match selected labels</span>
-                </label>
-                <label className="checkbox export-toggle">
-                  <input
-                    type="checkbox"
-                    checked={filterUseExportSelection}
-                    onChange={(event) =>
-                      handleFilterUseExportSelection(event.target.checked)
-                    }
-                  />
-                  <span>Only show images that match selected labels</span>
-                </label>
-                {categories.map((category) => (
-                  <div key={category.id} className="export-category">
-                    <div className="export-category-name">
-                      {category.name} ({categoryCounts.get(category.id) || 0})
-                    </div>
-                    <div className="export-labels">
-                      {category.labels.map((label) => (
-                        <label key={label.id} className="checkbox">
-                          <input
-                            type="checkbox"
-                            checked={exportLabelKeys.has(
-                              buildLabelKey(category.name, label.name)
-                            )}
-                            onChange={() =>
-                              toggleLabelSelection(
-                                buildLabelKey(category.name, label.name)
-                              )
-                            }
-                          />
-                          <span>
-                            {label.name} ({labelCounts.get(label.id) || 0})
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="nav-row">
-                <button
-                  className="btn"
-                  onClick={goPrev}
-                  disabled={currentIndex <= 0}
-                  type="button"
-                >
-                  Prev
-                </button>
-                <button
-                  className="btn ghost"
-                  onClick={skip}
-                  disabled={currentIndex >= images.length - 1}
-                  type="button"
-                >
-                  Skip
-                </button>
-                <button
-                  className="btn"
-                  onClick={goNext}
-                  disabled={currentIndex >= images.length - 1}
-                  type="button"
-                >
-                  Next
-                </button>
+                {!exportSelectionCollapsed ? (
+                  <>
+                    <label className="checkbox export-toggle">
+                      <input
+                        type="checkbox"
+                        checked={exportOnlySelected}
+                        onChange={(event) =>
+                          setExportOnlySelected(event.target.checked)
+                        }
+                      />
+                      <span>Only export images that match selected labels</span>
+                    </label>
+                    <label className="checkbox export-toggle">
+                      <input
+                        type="checkbox"
+                        checked={filterUseExportSelection}
+                        onChange={(event) =>
+                          handleFilterUseExportSelection(event.target.checked)
+                        }
+                      />
+                      <span>Only show images that match selected labels</span>
+                    </label>
+                    {categories.map((category) => (
+                      <div key={category.id} className="export-category">
+                        <div className="export-category-name">
+                          {`${category.name} (${
+                            exportCounts.categoryCounts.get(category.name) || 0
+                          })`}
+                        </div>
+                        <div className="export-labels">
+                          {category.labels.map((label) => (
+                            <label key={label.id} className="checkbox">
+                              <input
+                                type="checkbox"
+                                checked={exportLabelKeys.has(
+                                  buildLabelKey(category.name, label.name)
+                                )}
+                                onChange={() =>
+                                  toggleLabelSelection(
+                                    buildLabelKey(category.name, label.name)
+                                  )
+                                }
+                              />
+                              <span>
+                                {`${label.name} (${
+                                  exportCounts.labelCounts.get(
+                                    buildLabelKey(category.name, label.name)
+                                  ) || 0
+                                })`}
+                              </span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </>
+                ) : null}
               </div>
             </>
           ) : (

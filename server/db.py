@@ -587,6 +587,50 @@ def list_label_schema(project_id: int) -> list[dict]:
     return categories
 
 
+def list_label_counts(project_id: int) -> dict[str, list[dict]]:
+    with get_conn() as conn:
+        label_rows = conn.execute(
+            """
+            SELECT
+                c.id AS category_id,
+                c.name AS category_name,
+                l.id AS label_id,
+                l.name AS label_name,
+                COUNT(DISTINCT image_labels.rel_path) AS count
+            FROM image_labels
+            JOIN label_categories c
+                ON image_labels.category_id = c.id
+            JOIN label_options l
+                ON image_labels.label_option_id = l.id
+            WHERE image_labels.project_id = ?
+            GROUP BY c.id, l.id
+            ORDER BY c.sort_order, c.id, l.id
+            """,
+            (project_id,),
+        ).fetchall()
+
+        category_rows = conn.execute(
+            """
+            SELECT
+                c.id AS category_id,
+                c.name AS category_name,
+                COUNT(DISTINCT image_labels.rel_path) AS count
+            FROM image_labels
+            JOIN label_categories c
+                ON image_labels.category_id = c.id
+            WHERE image_labels.project_id = ?
+            GROUP BY c.id
+            ORDER BY c.sort_order, c.id
+            """,
+            (project_id,),
+        ).fetchall()
+
+    return {
+        "labels": [dict(row) for row in label_rows],
+        "categories": [dict(row) for row in category_rows],
+    }
+
+
 def add_category(project_id: int, name: str) -> list[dict]:
     now = utc_now()
     with get_conn() as conn:
