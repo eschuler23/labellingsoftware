@@ -39,6 +39,8 @@ npm run dev
 ## Usage
 
 - Click **Upload Folder** to import a local directory of images (each folder becomes a project).
+- New projects start with no categories/labels; create your own schema or reuse one.
+- In **Manage Categories & Labels**, use **Explore Schemas** to reuse schemas from other projects.
 - Create label categories and labels, then label images per category.
 - Keyboard shortcuts:
   - `1-9`: apply label in active category

@@ -93,6 +93,148 @@ type ProjectCounts = {
   categoryCounts: Map<string, number>;
 };
 
+type SchemaTemplateCategory = {
+  name: string;
+  labels: string[];
+};
+
+type SchemaTemplateGroup = {
+  signature: string;
+  categories: SchemaTemplateCategory[];
+  projectIds: number[];
+  projectNames: string[];
+};
+
+type SchemaCategoryDiff = {
+  name: string;
+  status: "added" | "removed" | "changed" | "same";
+  labels: string[];
+  addedLabels: string[];
+  removedLabels: string[];
+};
+
+type SchemaTemplateDiff = {
+  addedCategories: number;
+  removedCategories: number;
+  addedLabels: number;
+  removedLabels: number;
+  unchangedCategories: number;
+  hasChanges: boolean;
+  categories: SchemaCategoryDiff[];
+};
+
+const normalizeSchemaCategories = (
+  categories: LabelCategory[]
+): SchemaTemplateCategory[] =>
+  categories
+    .map((category) => ({
+      name: category.name.trim(),
+      labels: Array.from(
+        new Set(
+          category.labels
+            .map((label) => label.name.trim())
+            .filter((name) => name.length > 0)
+        )
+      ),
+    }))
+    .filter((category) => category.name.length > 0);
+
+const buildSchemaSignature = (categories: SchemaTemplateCategory[]): string =>
+  JSON.stringify(
+    categories
+      .map((category) => ({
+        name: category.name,
+        labels: [...category.labels].sort((a, b) => a.localeCompare(b)),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  );
+
+const diffSchemaAgainstCurrent = (
+  source: SchemaTemplateCategory[],
+  current: SchemaTemplateCategory[]
+): SchemaTemplateDiff => {
+  const currentByName = new Map<string, Set<string>>();
+  current.forEach((category) => {
+    currentByName.set(category.name, new Set(category.labels));
+  });
+
+  let addedCategories = 0;
+  let removedCategories = 0;
+  let addedLabels = 0;
+  let removedLabels = 0;
+  let unchangedCategories = 0;
+  const seenCategoryNames = new Set<string>();
+
+  const categories: SchemaCategoryDiff[] = source.map((category) => {
+    const currentLabels = currentByName.get(category.name);
+    seenCategoryNames.add(category.name);
+    if (!currentLabels) {
+      addedCategories += 1;
+      addedLabels += category.labels.length;
+      return {
+        name: category.name,
+        status: "added",
+        labels: [...category.labels],
+        addedLabels: [...category.labels],
+        removedLabels: [],
+      };
+    }
+
+    const missingLabels = category.labels.filter(
+      (label) => !currentLabels.has(label)
+    );
+    const extraLabels = Array.from(currentLabels).filter(
+      (label) => !category.labels.includes(label)
+    );
+    if (missingLabels.length > 0 || extraLabels.length > 0) {
+      addedLabels += missingLabels.length;
+      removedLabels += extraLabels.length;
+      return {
+        name: category.name,
+        status: "changed",
+        labels: [...category.labels],
+        addedLabels: missingLabels,
+        removedLabels: extraLabels,
+      };
+    }
+
+    unchangedCategories += 1;
+    return {
+      name: category.name,
+      status: "same",
+      labels: [...category.labels],
+      addedLabels: [],
+      removedLabels: [],
+    };
+  });
+
+  current.forEach((category) => {
+    if (seenCategoryNames.has(category.name)) {
+      return;
+    }
+    removedCategories += 1;
+    removedLabels += category.labels.length;
+    categories.push({
+      name: category.name,
+      status: "removed",
+      labels: [...category.labels],
+      addedLabels: [],
+      removedLabels: [...category.labels],
+    });
+  });
+
+  return {
+    addedCategories,
+    removedCategories,
+    addedLabels,
+    removedLabels,
+    unchangedCategories,
+    hasChanges:
+      addedCategories > 0 || removedCategories > 0 || addedLabels > 0 || removedLabels > 0,
+    categories,
+  };
+};
+
 const isSupported = (file: File) => {
   const lower = file.name.toLowerCase();
   return SUPPORTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
@@ -573,6 +715,17 @@ const App: React.FC = () => {
   const [unlabeledCategoryIds, setUnlabeledCategoryIds] = useState<Set<number>>(
     new Set()
   );
+  const [schemaExplorerOpen, setSchemaExplorerOpen] = useState(false);
+  const [schemaExplorerLoading, setSchemaExplorerLoading] = useState(false);
+  const [schemaExplorerError, setSchemaExplorerError] = useState<string | null>(
+    null
+  );
+  const [schemaExplorerGroups, setSchemaExplorerGroups] = useState<
+    SchemaTemplateGroup[]
+  >([]);
+  const [schemaApplyingSignature, setSchemaApplyingSignature] = useState<
+    string | null
+  >(null);
   const [filterMode, setFilterMode] = useState<"any" | "all">("any");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -668,6 +821,13 @@ const App: React.FC = () => {
     if (selectedProjectId === null) return;
     loadProjectData(selectedProjectId);
   }, [loadProjectData, selectedProjectId]);
+
+  useEffect(() => {
+    setSchemaExplorerOpen(false);
+    setSchemaExplorerError(null);
+    setSchemaExplorerGroups([]);
+    setSchemaApplyingSignature(null);
+  }, [selectedProjectId]);
 
   useEffect(() => {
     if (!projects.length) {
@@ -1708,84 +1868,222 @@ const App: React.FC = () => {
     goPrev,
   ]);
 
-  const handleCopySchema = useCallback(() => {
-    localStorage.setItem(
-      "labelling_schema_clipboard",
-      JSON.stringify(categories)
-    );
-    alert("Categories and labels copied to clipboard.");
-  }, [categories]);
-
-  const handlePasteSchema = useCallback(async () => {
-    if (!selectedProjectId) return;
-    const json = localStorage.getItem("labelling_schema_clipboard");
-    if (!json) {
-      alert("No schema found in clipboard.");
-      return;
-    }
-
+  const loadSchemaExplorer = useCallback(async () => {
+    if (selectedProjectId === null) return;
+    setSchemaExplorerLoading(true);
+    setSchemaExplorerError(null);
     try {
-      const schema = JSON.parse(json) as LabelCategory[];
-      if (!Array.isArray(schema)) throw new Error("Invalid schema format");
+      const projectsRes = await fetchJson<ProjectResponse>("/api/projects");
+      const sourceProjects = projectsRes.projects.filter(
+        (project) => project.id !== selectedProjectId
+      );
 
-      if (
-        !confirm(
-          `Paste ${schema.length} categories and their labels? This will merge with existing ones.`
-        )
-      )
+      if (!sourceProjects.length) {
+        setSchemaExplorerGroups([]);
         return;
+      }
 
-      setLoading(true);
-
-      let currentCats = [...categories];
-
-      for (const srcCat of schema) {
-        let targetCat = currentCats.find((c) => c.name === srcCat.name);
-        if (!targetCat) {
-          const res = await fetchJson<LabelSchemaResponse>(
-            `/api/projects/${selectedProjectId}/label-categories`,
-            {
-              method: "POST",
-              body: JSON.stringify({ name: srcCat.name }),
-            }
+      const schemas = await Promise.all(
+        sourceProjects.map(async (project) => {
+          const schemaRes = await fetchJson<LabelSchemaResponse>(
+            `/api/projects/${project.id}/label-schema`
           );
-          currentCats = res.categories;
-          targetCat = currentCats.find((c) => c.name === srcCat.name);
+          return {
+            project,
+            categories: normalizeSchemaCategories(schemaRes.categories),
+          };
+        })
+      );
+
+      const grouped = new Map<string, SchemaTemplateGroup>();
+      schemas.forEach(({ project, categories: schemaCategories }) => {
+        if (!schemaCategories.length) return;
+        const signature = buildSchemaSignature(schemaCategories);
+        const existing = grouped.get(signature);
+        if (existing) {
+          existing.projectIds.push(project.id);
+          existing.projectNames.push(project.name);
+          return;
         }
+        grouped.set(signature, {
+          signature,
+          categories: schemaCategories,
+          projectIds: [project.id],
+          projectNames: [project.name],
+        });
+      });
 
-        if (!targetCat) continue;
+      const nextGroups = Array.from(grouped.values())
+        .map((group) => ({
+          ...group,
+          projectNames: [...group.projectNames].sort((a, b) =>
+            a.localeCompare(b)
+          ),
+        }))
+        .sort((a, b) => {
+          if (b.projectNames.length !== a.projectNames.length) {
+            return b.projectNames.length - a.projectNames.length;
+          }
+          return (a.projectNames[0] || "").localeCompare(b.projectNames[0] || "");
+        });
 
-        for (const srcLabel of srcCat.labels) {
-          if (!targetCat.labels.some((l) => l.name === srcLabel.name)) {
+      setSchemaExplorerGroups(nextGroups);
+    } catch (err) {
+      setSchemaExplorerError(
+        err instanceof Error ? err.message : "Failed to load existing schemas"
+      );
+      setSchemaExplorerGroups([]);
+    } finally {
+      setSchemaExplorerLoading(false);
+    }
+  }, [selectedProjectId]);
+
+  const handleOpenSchemaExplorer = useCallback(() => {
+    if (selectedProjectId === null) return;
+    setSchemaExplorerOpen(true);
+    void loadSchemaExplorer();
+  }, [loadSchemaExplorer, selectedProjectId]);
+
+  const handleApplySchemaGroup = useCallback(
+    async (group: SchemaTemplateGroup) => {
+      if (selectedProjectId === null) return;
+      if (!group.categories.length) return;
+
+      const sourceNames = group.projectNames.join(", ");
+      if (
+        !window.confirm(
+          `Use schema from ${sourceNames}? This will sync the current project to this schema and remove categories/labels that are not part of it.`
+        )
+      ) {
+        return;
+      }
+
+      setSchemaApplyingSignature(group.signature);
+      setSchemaExplorerError(null);
+
+      try {
+        let currentCats = [...categories];
+        const sourceCategoryNames = new Set(
+          group.categories.map((category) => category.name)
+        );
+
+        for (const sourceCategory of group.categories) {
+          let targetCategory = currentCats.find(
+            (category) => category.name === sourceCategory.name
+          );
+
+          if (!targetCategory) {
+            const res = await fetchJson<LabelSchemaResponse>(
+              `/api/projects/${selectedProjectId}/label-categories`,
+              {
+                method: "POST",
+                body: JSON.stringify({ name: sourceCategory.name }),
+              }
+            );
+            currentCats = res.categories;
+            targetCategory = currentCats.find(
+              (category) => category.name === sourceCategory.name
+            );
+          }
+
+          if (!targetCategory) continue;
+
+          const sourceLabelNames = new Set(sourceCategory.labels);
+          for (const existingLabel of [...targetCategory.labels]) {
+            if (sourceLabelNames.has(existingLabel.name)) {
+              continue;
+            }
+            const res = await fetchJson<LabelSchemaResponse>(
+              `/api/projects/${selectedProjectId}/label-options`,
+              {
+                method: "DELETE",
+                body: JSON.stringify({
+                  label_id: existingLabel.id,
+                }),
+              }
+            );
+            currentCats = res.categories;
+          }
+
+          targetCategory = currentCats.find(
+            (category) => category.name === sourceCategory.name
+          );
+          if (!targetCategory) continue;
+
+          for (const sourceLabelName of sourceCategory.labels) {
+            if (
+              targetCategory.labels.some((label) => label.name === sourceLabelName)
+            ) {
+              continue;
+            }
+
             const res = await fetchJson<LabelSchemaResponse>(
               `/api/projects/${selectedProjectId}/label-options`,
               {
                 method: "POST",
                 body: JSON.stringify({
-                  category_id: targetCat.id,
-                  name: srcLabel.name,
+                  category_id: targetCategory.id,
+                  name: sourceLabelName,
                 }),
               }
             );
             currentCats = res.categories;
-            targetCat = currentCats.find((c) => c.id === targetCat!.id);
-            if (!targetCat) break;
+            targetCategory = currentCats.find(
+              (category) => category.id === targetCategory!.id
+            );
+            if (!targetCategory) break;
           }
         }
-      }
 
-      setCategories(currentCats);
-      alert("Schema pasted successfully.");
-    } catch (err) {
-      console.error(err);
-      setError(
-        "Failed to paste schema: " +
-          (err instanceof Error ? err.message : String(err))
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [categories, selectedProjectId]);
+        for (const existingCategory of [...currentCats]) {
+          if (sourceCategoryNames.has(existingCategory.name)) {
+            continue;
+          }
+          const res = await fetchJson<LabelSchemaResponse>(
+            `/api/projects/${selectedProjectId}/label-categories`,
+            {
+              method: "DELETE",
+              body: JSON.stringify({
+                category_id: existingCategory.id,
+              }),
+            }
+          );
+          currentCats = res.categories;
+        }
+
+        const orderedCategoryIds = group.categories
+          .map((sourceCategory) =>
+            currentCats.find((category) => category.name === sourceCategory.name)
+              ?.id
+          )
+          .filter((id): id is number => typeof id === "number");
+
+        if (orderedCategoryIds.length > 0) {
+          const res = await fetchJson<LabelSchemaResponse>(
+            `/api/projects/${selectedProjectId}/label-categories/order`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                order: orderedCategoryIds,
+              }),
+            }
+          );
+          currentCats = res.categories;
+        }
+
+        setCategories(currentCats);
+        setSchemaExplorerOpen(false);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to apply schema";
+        setSchemaExplorerError(message);
+        setError(message);
+      } finally {
+        setSchemaApplyingSignature(null);
+      }
+    },
+    [categories, selectedProjectId]
+  );
 
   const cancelProjectEdit = useCallback(() => {
     setEditingProjectId(null);
@@ -2049,6 +2347,15 @@ const App: React.FC = () => {
     next.unshift(active);
     return next;
   }, [activeCategoryId, categories]);
+
+  const schemaDiffBySignature = useMemo(() => {
+    const currentSchema = normalizeSchemaCategories(categories);
+    const next = new Map<string, SchemaTemplateDiff>();
+    schemaExplorerGroups.forEach((group) => {
+      next.set(group.signature, diffSchemaAgainstCurrent(group.categories, currentSchema));
+    });
+    return next;
+  }, [categories, schemaExplorerGroups]);
 
   return (
     <div className="app">
@@ -2619,20 +2926,222 @@ const App: React.FC = () => {
                   <div className="label-actions">
                     <button
                       className="btn ghost small"
-                      onClick={handleCopySchema}
+                      onClick={handleOpenSchemaExplorer}
+                      disabled={selectedProjectId === null}
                       type="button"
                     >
-                      Copy Schema
-                    </button>
-                    <button
-                      className="btn ghost small"
-                      onClick={handlePasteSchema}
-                      type="button"
-                    >
-                      Paste Schema
+                      Explore Schemas
                     </button>
                   </div>
                 </div>
+                {schemaExplorerOpen ? (
+                  <div className="schema-explorer">
+                    <div className="schema-explorer-header">
+                      <div className="schema-explorer-title">
+                        Explore Existing Schemas
+                      </div>
+                      <div className="label-actions">
+                        <button
+                          className="btn ghost small"
+                          onClick={() => void loadSchemaExplorer()}
+                          disabled={schemaExplorerLoading}
+                          type="button"
+                        >
+                          Refresh
+                        </button>
+                        <button
+                          className="btn ghost small"
+                          onClick={() => setSchemaExplorerOpen(false)}
+                          type="button"
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                    <div className="subtle">
+                      Green means items will be added. Red means items will be removed.
+                    </div>
+                    {schemaExplorerLoading ? (
+                      <div className="subtle">Loading schemas...</div>
+                    ) : schemaExplorerError ? (
+                      <div className="error-banner">{schemaExplorerError}</div>
+                    ) : schemaExplorerGroups.length ? (
+                      <div className="schema-group-list">
+                        {schemaExplorerGroups.map((group) => {
+                          const diff = schemaDiffBySignature.get(group.signature);
+                          return (
+                            <div key={group.signature} className="schema-group-card">
+                              <div className="schema-group-header">
+                                <div>
+                                  <div className="schema-group-projects">
+                                    {group.projectNames.join(", ")}
+                                  </div>
+                                  <div className="subtle">
+                                    {group.projectNames.length > 1
+                                      ? `${group.projectNames.length} projects share this schema`
+                                      : "1 project has this schema"}
+                                  </div>
+                                  {diff ? (
+                                    <div className="schema-group-badges">
+                                      {!diff.hasChanges ? (
+                                        <span className="schema-badge neutral">
+                                          No changes
+                                        </span>
+                                      ) : (
+                                        <>
+                                          {diff.addedCategories > 0 ? (
+                                            <span className="schema-badge added">
+                                              +{diff.addedCategories} categories
+                                            </span>
+                                          ) : null}
+                                          {diff.addedLabels > 0 ? (
+                                            <span className="schema-badge added">
+                                              +{diff.addedLabels} labels
+                                            </span>
+                                          ) : null}
+                                          {diff.removedCategories > 0 ? (
+                                            <span className="schema-badge removed">
+                                              -{diff.removedCategories} categories
+                                            </span>
+                                          ) : null}
+                                          {diff.removedLabels > 0 ? (
+                                            <span className="schema-badge removed">
+                                              -{diff.removedLabels} labels
+                                            </span>
+                                          ) : null}
+                                        </>
+                                      )}
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <button
+                                  className="btn small"
+                                  onClick={() => void handleApplySchemaGroup(group)}
+                                  disabled={
+                                    schemaApplyingSignature === group.signature ||
+                                    (diff ? !diff.hasChanges : false)
+                                  }
+                                  type="button"
+                                >
+                                  {schemaApplyingSignature === group.signature
+                                    ? "Applying..."
+                                    : diff && !diff.hasChanges
+                                      ? "Up to date"
+                                      : "Use Schema"}
+                                </button>
+                              </div>
+                              <div className="schema-group-categories">
+                                {(diff?.categories || []).map((categoryDiff) => {
+                                  const status = categoryDiff.status;
+                                  const categoryLabelTone =
+                                    status === "added"
+                                      ? "added"
+                                      : status === "removed"
+                                        ? "removed"
+                                        : "same";
+                                  return (
+                                    <div
+                                      key={`${group.signature}-${categoryDiff.name}-${status}`}
+                                      className={`schema-group-category ${status}`}
+                                    >
+                                      <div className="schema-group-category-head">
+                                        <div className={`schema-group-category-name ${status}`}>
+                                          {categoryDiff.name}
+                                        </div>
+                                        <span className={`schema-mini-badge ${status}`}>
+                                          {status === "added"
+                                            ? "New"
+                                            : status === "removed"
+                                              ? "Removed"
+                                            : status === "changed"
+                                              ? "Changed"
+                                              : "Same"}
+                                        </span>
+                                      </div>
+                                      {status === "changed" ? (
+                                        <div className="schema-diff-lines">
+                                          {categoryDiff.addedLabels.length > 0 ? (
+                                            <div className="schema-diff-line added">
+                                              <span className="schema-diff-prefix">
+                                                Adds:
+                                              </span>
+                                              <div className="schema-label-list">
+                                                {categoryDiff.addedLabels.map((label) => (
+                                                  <span
+                                                    key={`${group.signature}-${categoryDiff.name}-add-${label}`}
+                                                    className="schema-label-chip added"
+                                                  >
+                                                    {label}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          ) : null}
+                                          {categoryDiff.removedLabels.length > 0 ? (
+                                            <div className="schema-diff-line removed">
+                                              <span className="schema-diff-prefix">
+                                                Removes:
+                                              </span>
+                                              <div className="schema-label-list">
+                                                {categoryDiff.removedLabels.map((label) => (
+                                                  <span
+                                                    key={`${group.signature}-${categoryDiff.name}-remove-${label}`}
+                                                    className="schema-label-chip removed"
+                                                  >
+                                                    {label}
+                                                  </span>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          ) : null}
+                                          {!categoryDiff.addedLabels.length &&
+                                          !categoryDiff.removedLabels.length ? (
+                                            <div className="subtle">No label changes</div>
+                                          ) : null}
+                                        </div>
+                                      ) : (
+                                        <div
+                                          className={
+                                            status === "added"
+                                              ? "schema-diff-line added"
+                                              : status === "removed"
+                                                ? "schema-diff-line removed"
+                                                : "schema-diff-line same"
+                                          }
+                                        >
+                                          <div className="schema-label-list">
+                                            {categoryDiff.labels.length ? (
+                                              categoryDiff.labels.map((label) => (
+                                                <span
+                                                  key={`${group.signature}-${categoryDiff.name}-${status}-${label}`}
+                                                  className={`schema-label-chip ${categoryLabelTone}`}
+                                                >
+                                                  {label}
+                                                </span>
+                                              ))
+                                            ) : (
+                                              <span className="schema-label-chip empty">
+                                                No labels
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="subtle">
+                        No reusable schemas found in other projects.
+                      </div>
+                    )}
+                  </div>
+                ) : null}
                 {!manageCollapsed
                   ? categories.map((category) => (
                       <div

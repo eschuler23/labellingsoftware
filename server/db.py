@@ -13,7 +13,6 @@ UPLOADS_DIR = BASE_DIR / "uploads"
 DB_PATH = DATA_DIR / "labeling.db"
 
 DEFAULT_CATEGORY_NAME = "Quality"
-DEFAULT_LABELS = ["Usable", "Too Blurry", "Wrong Setup", "Irrelevant"]
 
 
 def utc_now() -> str:
@@ -297,34 +296,6 @@ def init_db() -> None:
         _ensure_category_sort_order(conn)
 
 
-def _ensure_default_category(conn: sqlite3.Connection, project_id: int) -> int:
-    now = utc_now()
-    next_order = conn.execute(
-        """
-        SELECT COALESCE(MAX(sort_order), -1) AS max_order
-        FROM label_categories
-        WHERE project_id = ?
-        """,
-        (project_id,),
-    ).fetchone()["max_order"]
-    sort_order = int(next_order) + 1
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO label_categories (project_id, name, sort_order, created_at)
-        VALUES (?, ?, ?, ?)
-        """,
-        (project_id, DEFAULT_CATEGORY_NAME, sort_order, now),
-    )
-    category = conn.execute(
-        """
-        SELECT id FROM label_categories
-        WHERE project_id = ? AND name = ?
-        """,
-        (project_id, DEFAULT_CATEGORY_NAME),
-    ).fetchone()
-    return category["id"]
-
-
 def create_project(name: str) -> dict:
     storage_dir = f"project_{uuid.uuid4().hex}"
     now = utc_now()
@@ -337,16 +308,6 @@ def create_project(name: str) -> dict:
             (name, storage_dir, now, now),
         )
         project_id = cur.lastrowid
-
-        category_id = _ensure_default_category(conn, project_id)
-        for label in DEFAULT_LABELS:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO label_options (project_id, category_id, name, created_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (project_id, category_id, label, now),
-            )
 
     project = get_project(project_id)
     if not project:
@@ -568,21 +529,6 @@ def list_label_schema(project_id: int) -> list[dict]:
                     "category_id": row["category_id"],
                 }
             )
-
-    if not categories:
-        # ensure defaults for legacy projects
-        with get_conn() as conn:
-            category_id = _ensure_default_category(conn, project_id)
-            now = utc_now()
-            for label in DEFAULT_LABELS:
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO label_options (project_id, category_id, name, created_at)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    (project_id, category_id, label, now),
-                )
-        return list_label_schema(project_id)
 
     return categories
 
