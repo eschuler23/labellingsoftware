@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .db import (
@@ -39,6 +40,10 @@ from .watchers import SUPPORTED_EXTENSIONS, UploadWatcher
 
 app = FastAPI(title="Labeling Backend")
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+WEB_DIST_DIR = BASE_DIR / "web" / "dist"
+WEB_DIST_INDEX = WEB_DIST_DIR / "index.html"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
@@ -48,6 +53,13 @@ app.add_middleware(
 )
 
 watcher = UploadWatcher()
+
+if (WEB_DIST_DIR / "assets").is_dir():
+    app.mount(
+        "/assets",
+        StaticFiles(directory=str(WEB_DIST_DIR / "assets")),
+        name="web-assets",
+    )
 
 
 class LabelUpdate(BaseModel):
@@ -463,3 +475,24 @@ def api_rescan(project_id: int) -> dict[str, Any]:
     watcher.watch_project(project_id, storage_dir)
 
     return {"ok": True}
+
+
+@app.get("/", include_in_schema=False)
+def serve_frontend_root() -> FileResponse:
+    if not WEB_DIST_INDEX.is_file():
+        raise HTTPException(status_code=404, detail="Frontend is not built")
+    return FileResponse(WEB_DIST_INDEX)
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+def serve_frontend(full_path: str) -> FileResponse:
+    if full_path.startswith("api"):
+        raise HTTPException(status_code=404, detail="Not found")
+    if not WEB_DIST_INDEX.is_file():
+        raise HTTPException(status_code=404, detail="Frontend is not built")
+
+    requested = (WEB_DIST_DIR / full_path).resolve()
+    if requested.is_file() and requested.is_relative_to(WEB_DIST_DIR.resolve()):
+        return FileResponse(requested)
+
+    return FileResponse(WEB_DIST_INDEX)
