@@ -2,6 +2,29 @@
 
 React + FastAPI image labeling tool with multi-category labels, keyboard shortcuts, filtering, and CSV preview/export.
 
+## License
+
+This project uses dual licensing:
+- Default public license: PolyForm Noncommercial 1.0.0 (`LICENSE`, `LICENSES/PolyForm-Noncommercial-1.0.0.md`)
+- Commercial use: requires a separate paid commercial license (`COMMERCIAL-LICENSE.md`)
+
+What this means in practice:
+- Students, researchers, and other noncommercial users can clone and use it under the noncommercial terms.
+- Companies and other commercial users must reach out for a commercial license.
+
+## Feature Requests
+
+This project is actively maintained.
+
+If you want a new feature, please open a GitHub issue:
+- https://github.com/eschuler23/labellingsoftware/issues
+
+When possible, include:
+- what problem you want to solve,
+- the exact workflow you have in mind,
+- screenshots or mockups,
+- why current behavior is not enough.
+
 ## Quick Start (Local Dev)
 
 Run everything from the repo root:
