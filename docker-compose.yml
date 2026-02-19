@@ -12,4 +12,6 @@ services:
 
 volumes:
   labelling_data:
+    name: labelling_data
   labelling_uploads:
+    name: labelling_uploads
