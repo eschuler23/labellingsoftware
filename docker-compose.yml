@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "${HOST_BIND:-127.0.0.1}:8000:8000"
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT:-8000}:8000"
     volumes:
       - labelling_data:/app/data
       - labelling_uploads:/app/uploads

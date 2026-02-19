@@ -1,0 +1,21 @@
+services:
+  labellingsoftware:
+    ports: []
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2.9-alpine
+    depends_on:
+      - labellingsoftware
+    ports:
+      - "${HTTPS_HOST_BIND:-127.0.0.1}:${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

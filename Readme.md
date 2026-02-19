@@ -34,7 +34,7 @@ Run it with persistent local volumes:
 
 ```bash
 docker run --rm \
-  -p 127.0.0.1:8000:8000 \
+  -p 127.0.0.1:8001:8000 \
   -v labelling_data:/app/data \
   -v labelling_uploads:/app/uploads \
   labellingsoftware:local
@@ -44,10 +44,10 @@ Or use Compose:
 
 ```bash
 cd /path/to/labelling
-docker compose up --build
+HOST_PORT=8001 docker compose up --build
 ```
 
-Then open: `http://localhost:8000`
+Then open: `http://localhost:8001`
 
 ## Lab Sync (Multiple Laptops)
 
@@ -61,12 +61,55 @@ Start compose in network mode on the host machine:
 
 ```bash
 cd /path/to/labelling
-HOST_BIND=0.0.0.0 docker compose up --build -d
+HOST_BIND=0.0.0.0 HOST_PORT=8000 docker compose up --build -d
 ```
 
 Then teammates open `http://<host-machine-ip>:8000`.
 
 Important: do not run multiple backend containers against the same SQLite file. For one shared backend process, SQLite is fine.
+
+## HTTPS Lab Mode (Optional)
+
+If you want HTTPS, run compose with the HTTPS override (Caddy reverse proxy):
+
+```bash
+cd /path/to/labelling
+LABELLING_HTTPS_HOST=localhost HTTPS_HOST_BIND=127.0.0.1 HTTPS_PORT=8443 HOST_PORT=18000 \
+  docker compose -f docker-compose.yml -f docker-compose.https.yml up --build -d
+```
+
+Open: `https://localhost:8443`
+
+For shared lab usage (multiple laptops), run on the host machine with its LAN IP:
+
+```bash
+cd /path/to/labelling
+LABELLING_HTTPS_HOST=<host-machine-ip> HTTPS_HOST_BIND=0.0.0.0 HTTPS_PORT=8443 HOST_PORT=18000 \
+  docker compose -f docker-compose.yml -f docker-compose.https.yml up --build -d
+```
+
+Teammates then open: `https://<host-machine-ip>:8443`
+
+### Remove Browser "Not Secure" Warning
+
+Caddy uses a local internal CA in this mode. To remove warnings, trust that CA on each client machine.
+
+Export the CA certificate from the host:
+
+```bash
+cd /path/to/labelling
+docker compose -f docker-compose.yml -f docker-compose.https.yml exec caddy \
+  sh -lc 'cat /data/caddy/pki/authorities/local/root.crt' > caddy-local-root.crt
+```
+
+macOS trust command (run on each laptop, admin required):
+
+```bash
+sudo security add-trusted-cert -d -r trustRoot \
+  -k /Library/Keychains/System.keychain caddy-local-root.crt
+```
+
+After trusting the cert, reload the HTTPS page.
 
 ## Docker Hub Notes
 

@@ -1,0 +1,7 @@
+{
+    local_certs
+}
+
+https://{$LABELLING_HTTPS_HOST:localhost} {
+    reverse_proxy labellingsoftware:8000
+}
