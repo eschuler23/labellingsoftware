@@ -2,30 +2,48 @@
 
 React + FastAPI image labeling tool with multi-category labels, keyboard shortcuts, filtering, and CSV preview/export.
 
-## License
+## Usage
 
-This project uses dual licensing:
-- Default public license: PolyForm Noncommercial 1.0.0 (`LICENSE`, `LICENSES/PolyForm-Noncommercial-1.0.0.md`)
-- Commercial use: requires a separate paid commercial license (`COMMERCIAL-LICENSE.md`)
+- Click **Upload Folder** to import a local directory of images (each folder becomes a project).
+- New projects start with no categories/labels; create your own schema or reuse one.
+- In **Manage Categories & Labels**, use **Explore Schemas** to reuse schemas from other projects.
+- Create label categories and labels, then label images per category.
+- Keyboard shortcuts:
+  - `1-9`: apply label in active category
+  - `Shift+1-9`: toggle label in active category
+  - `←` / `→`: previous/next image
+  - `X`: clear labels in active category
+- **Filter** button:
+  - toggle filter active on/off,
+  - choose `Any` or `All`,
+  - optionally use export selection as filter source.
+- **Unlabeled** button:
+  - select categories to show images missing labels in those categories,
+  - selecting a category there also activates that category for hotkeys.
+- **Preview CSV** opens a preview tab where you can inspect rows, edit filename, and click **Download CSV**.
+  - If nothing opens, allow popups for localhost.
 
-What this means in practice:
-- Students, researchers, and other noncommercial users can clone and use it under the noncommercial terms.
-- Companies and other commercial users must reach out for a commercial license.
+## Screenshots
 
-## Feature Requests
+<p align="center">
 
-This project is actively maintained.
+| | |
+|---|---|
+| <img src="https://github.com/user-attachments/assets/740e6a58-e7c5-4eed-b218-404fd9dab7c1" width="450"/> | <img src="https://github.com/user-attachments/assets/f3222603-6fa8-45a5-a21c-1a39601e89a1" width="450"/> |
+| <img src="https://github.com/user-attachments/assets/de0a6468-4ec3-42dd-bef2-9bb900996c50" width="450"/> | <img src="https://github.com/user-attachments/assets/05a296a3-7622-4a98-aa14-920d3c5121af" width="450"/> |
 
-If you want a new feature, please open a GitHub issue:
-- https://github.com/eschuler23/labellingsoftware/issues
+</p>
 
-When possible, include:
-- what problem you want to solve,
-- the exact workflow you have in mind,
-- screenshots or mockups,
-- why current behavior is not enough.
+## Data & Storage
 
-## Quick Start (Local Dev)
+- SQLite DB: `data/labeling.db`
+- Uploaded files: `uploads/`
+- Supported image formats: JPG, JPEG, PNG, GIF, BMP, WebP
+- In Docker mode, data lives in named volumes: `labelling_data` and `labelling_uploads`.
+
+## Setup
+
+### Quick Start (Local Dev)
 
 Run everything from the repo root:
 
@@ -42,7 +60,7 @@ This script:
 
 Stop both with `Ctrl+C`.
 
-## Docker (Single Container)
+### Docker (Single Container)
 
 Make sure Docker Desktop (or Docker daemon) is running first.
 
@@ -72,7 +90,24 @@ HOST_PORT=8001 docker compose up --build
 
 Then open: `http://localhost:8001`
 
-## Lab Sync (Multiple Laptops)
+### Manual Start (Optional)
+
+Backend:
+
+```bash
+cd /path/to/labelling
+.venv/bin/python -m uvicorn server.app:app --reload --host 127.0.0.1 --port 8000
+```
+
+Frontend:
+
+```bash
+cd /path/to/labelling/web
+npm install
+npm run dev
+```
+
+### Lab Sync (Multiple Laptops)
 
 Yes, network mode is the right approach for synchronization:
 - run one central container on one machine/server,
@@ -91,7 +126,7 @@ Then teammates open `http://<host-machine-ip>:8000`.
 
 Important: do not run multiple backend containers against the same SQLite file. For one shared backend process, SQLite is fine.
 
-## HTTPS Lab Mode (Optional)
+### HTTPS Lab Mode (Optional)
 
 If you want HTTPS, run compose with the HTTPS override (Caddy reverse proxy):
 
@@ -113,7 +148,7 @@ LABELLING_HTTPS_HOST=<host-machine-ip> HTTPS_HOST_BIND=0.0.0.0 HTTPS_PORT=8443 H
 
 Teammates then open: `https://<host-machine-ip>:8443`
 
-### Remove Browser "Not Secure" Warning
+#### Remove Browser "Not Secure" Warning
 
 Caddy uses a local internal CA in this mode. To remove warnings, trust that CA on each client machine.
 
@@ -134,62 +169,35 @@ sudo security add-trusted-cert -d -r trustRoot \
 
 After trusting the cert, reload the HTTPS page.
 
-## Docker Hub Notes
+### Docker Hub Notes
 
 - Docker Hub is optional and mainly useful to distribute the app image faster.
 - The pushed image contains application code/runtime, not your local `uploads` or `data`.
 - Your images/DB stay private on your machine unless you explicitly copy/share volumes.
 - Local-only mode remains the default with compose (`127.0.0.1` bind).
 
-## Manual Start (Optional)
+## Collaboration
 
-Backend:
+This project is actively maintained.
 
-```bash
-cd /path/to/labelling
-.venv/bin/python -m uvicorn server.app:app --reload --host 127.0.0.1 --port 8000
-```
+If you want a new feature, please open a GitHub issue:
+- https://github.com/eschuler23/labellingsoftware/issues
 
-Frontend:
+When possible, include:
+- what problem you want to solve,
+- the exact workflow you have in mind,
+- screenshots or mockups,
+- why current behavior is not enough.
 
-```bash
-cd /path/to/labelling/web
-npm install
-npm run dev
-```
+For contribution terms, see:
+- `CONTRIBUTING.md`
 
-## Usage
+## License
 
-- Click **Upload Folder** to import a local directory of images (each folder becomes a project).
-- New projects start with no categories/labels; create your own schema or reuse one.
-- In **Manage Categories & Labels**, use **Explore Schemas** to reuse schemas from other projects.
-- Create label categories and labels, then label images per category.
-- Keyboard shortcuts:
-  - `1-9`: apply label in active category
-  - `Shift+1-9`: toggle label in active category
-  - `←` / `→`: previous/next image
-  - `X`: clear labels in active category
-- **Filter** button:
-  - toggle filter active on/off,
-  - choose `Any` or `All`,
-  - optionally use export selection as filter source.
-- **Unlabeled** button:
-  - select categories to show images missing labels in those categories,
-  - selecting a category there also activates that category for hotkeys.
-- **Preview CSV** opens a preview tab where you can inspect rows, edit filename, and click **Download CSV**.
-  - If nothing opens, allow popups for localhost.
-<p align="center">
+This project uses dual licensing:
+- Default public license: PolyForm Noncommercial 1.0.0 (`LICENSE`, `LICENSES/PolyForm-Noncommercial-1.0.0.md`)
+- Commercial use: requires a separate paid commercial license (`COMMERCIAL-LICENSE.md`)
 
-| | |
-|---|---|
-| <img src="https://github.com/user-attachments/assets/740e6a58-e7c5-4eed-b218-404fd9dab7c1" width="450"/> | <img src="https://github.com/user-attachments/assets/f3222603-6fa8-45a5-a21c-1a39601e89a1" width="450"/> |
-| <img src="https://github.com/user-attachments/assets/de0a6468-4ec3-42dd-bef2-9bb900996c50" width="450"/> | <img src="https://github.com/user-attachments/assets/05a296a3-7622-4a98-aa14-920d3c5121af" width="450"/> |
-
-</p>
-
-## Data & Storage
-
-- SQLite DB: `data/labeling.db`
-- Uploaded files: `uploads/`
-- Supported image formats: JPG, JPEG, PNG, GIF, BMP, WebP
-- In Docker mode, data lives in named volumes: `labelling_data` and `labelling_uploads`.
+What this means in practice:
+- Students, researchers, and other noncommercial users can clone and use it under the noncommercial terms.
+- Companies and other commercial users must reach out for a commercial license.
