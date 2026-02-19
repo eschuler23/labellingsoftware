@@ -178,6 +178,14 @@ npm run dev
   - selecting a category there also activates that category for hotkeys.
 - **Preview CSV** opens a preview tab where you can inspect rows, edit filename, and click **Download CSV**.
   - If nothing opens, allow popups for localhost.
+<p align="center">
+
+| | |
+|---|---|
+| <img src="https://github.com/user-attachments/assets/740e6a58-e7c5-4eed-b218-404fd9dab7c1" width="450"/> | <img src="https://github.com/user-attachments/assets/f3222603-6fa8-45a5-a21c-1a39601e89a1" width="450"/> |
+| <img src="https://github.com/user-attachments/assets/de0a6468-4ec3-42dd-bef2-9bb900996c50" width="450"/> | <img src="https://github.com/user-attachments/assets/05a296a3-7622-4a98-aa14-920d3c5121af" width="450"/> |
+
+</p>
 
 ## Data & Storage
 
