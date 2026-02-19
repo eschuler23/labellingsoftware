@@ -169,13 +169,6 @@ sudo security add-trusted-cert -d -r trustRoot \
 
 After trusting the cert, reload the HTTPS page.
 
-### Docker Hub Notes
-
-- Docker Hub is optional and mainly useful to distribute the app image faster.
-- The pushed image contains application code/runtime, not your local `uploads` or `data`.
-- Your images/DB stay private on your machine unless you explicitly copy/share volumes.
-- Local-only mode remains the default with compose (`127.0.0.1` bind).
-
 ## Collaboration
 
 This project is actively maintained.
