@@ -1,42 +1,62 @@
 # Labelingsoftware
 
-A stateful React image labeling tool with folder uploads, keyboard shortcuts, multi-category labels, and CSV export.
+React + FastAPI image labeling tool with multi-category labels, keyboard shortcuts, filtering, and CSV preview/export.
 
-## React app
+## Quick Start (Recommended)
 
-### Run locally (frontend)
+Run everything from the repo root:
 
 ```bash
-cd web
+cd /path/to/labelling
+./run_labelling.sh
+```
+
+This script:
+- creates `.venv` if needed,
+- installs backend dependencies,
+- starts FastAPI on `http://localhost:8000`,
+- starts the frontend on `http://localhost:5173`.
+
+Stop both with `Ctrl+C`.
+
+## Manual Start (Optional)
+
+Backend:
+
+```bash
+cd /path/to/labelling
+.venv/bin/python -m uvicorn server.app:app --reload --host 127.0.0.1 --port 8000
+```
+
+Frontend:
+
+```bash
+cd /path/to/labelling/web
 npm install
 npm run dev
 ```
 
-### Backend (FastAPI + SQLite)
+## Usage
 
-```bash
-# from repo root
-pip install fastapi uvicorn watchdog
-uvicorn server.app:app --reload
-```
+- Click **Upload Folder** to import a local directory of images (each folder becomes a project).
+- Create label categories and labels, then label images per category.
+- Keyboard shortcuts:
+  - `1-9`: apply label in active category
+  - `Shift+1-9`: toggle label in active category
+  - `←` / `→`: previous/next image
+  - `X`: clear labels in active category
+- **Filter** button:
+  - toggle filter active on/off,
+  - choose `Any` or `All`,
+  - optionally use export selection as filter source.
+- **Unlabeled** button:
+  - select categories to show images missing labels in those categories,
+  - selecting a category there also activates that category for hotkeys.
+- **Preview CSV** opens a preview tab where you can inspect rows, edit filename, and click **Download CSV**.
+  - If nothing opens, allow popups for localhost.
 
-- The backend stores project state in `data/labeling.db`.
-- Uploaded files are stored under `uploads/`.
-- The backend watches `uploads/` for new files and you can click **Refresh** to pull new items into the UI.
+## Data & Storage
 
-### Usage
-
-- Click **Upload Folder** to load a local folder of images.
-- Each folder becomes a project in the sidebar (upload multiple folders anytime).
-- Create **label categories** (e.g. “Focus”, “Content type”). Each category can have multiple labels.
-- Assign labels per category; an image can have multiple labels across categories.
-- Use number keys **1-9** for the active category, arrows to navigate, **X** to clear that category.
-- Filter previews by label selection (match any/all).
-- Use **Export Selection** to choose which labels are included in the CSV export.
-- (Optional) Export only images that match selected labels.
-- Click **Export CSV** to download `labels.csv` (`filename` + selected category columns).
-
-### Notes
-
-- Folder selection uses the browser directory picker (via `webkitdirectory`).
-- Supported formats: JPG, PNG, GIF, BMP, WebP.
+- SQLite DB: `data/labeling.db`
+- Uploaded files: `uploads/`
+- Supported image formats: JPG, JPEG, PNG, GIF, BMP, WebP
