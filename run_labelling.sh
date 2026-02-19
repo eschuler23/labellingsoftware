@@ -1,28 +1,34 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Function to kill processes on exit
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+BACKEND_PID=""
+FRONTEND_PID=""
+
 cleanup() {
     echo "Stopping servers..."
-    kill $BACKEND_PID $FRONTEND_PID 2>/dev/null
-    exit
+    if [ -n "${BACKEND_PID:-}" ]; then
+        kill "$BACKEND_PID" 2>/dev/null || true
+    fi
+    if [ -n "${FRONTEND_PID:-}" ]; then
+        kill "$FRONTEND_PID" 2>/dev/null || true
+    fi
 }
 
-# Trap SIGINT (Ctrl+C)
-trap cleanup SIGINT
+trap cleanup EXIT INT TERM
 
-# Setup/Activate Python Environment
-if [ ! -d ".venv" ]; then
+if [ ! -x ".venv/bin/python" ]; then
     echo "Creating virtual environment..."
     python3 -m venv .venv
 fi
-source .venv/bin/activate
 
 echo "Installing/Updating Python dependencies..."
-pip install fastapi uvicorn watchdog Pillow
+.venv/bin/python -m pip install --disable-pip-version-check fastapi uvicorn watchdog Pillow python-multipart
 
 echo "Starting Backend..."
-# Run from root as per Readme
-uvicorn server.app:app --reload &
+.venv/bin/python -m uvicorn server.app:app --reload --host 127.0.0.1 --port 8000 &
 BACKEND_PID=$!
 
 echo "Setting up Frontend..."
@@ -36,5 +42,4 @@ echo "Starting Frontend..."
 npm run dev &
 FRONTEND_PID=$!
 
-# Wait for both processes
-wait
+wait "$BACKEND_PID" "$FRONTEND_PID"

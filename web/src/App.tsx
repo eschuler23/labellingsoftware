@@ -569,7 +569,10 @@ const App: React.FC = () => {
   const [filterLabelKeys, setFilterLabelKeys] = useState<Set<string>>(
     new Set()
   );
-  const [showUnlabeledOnly, setShowUnlabeledOnly] = useState(false);
+  const [unlabeledOpen, setUnlabeledOpen] = useState(false);
+  const [unlabeledCategoryIds, setUnlabeledCategoryIds] = useState<Set<number>>(
+    new Set()
+  );
   const [filterMode, setFilterMode] = useState<"any" | "all">("any");
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -577,27 +580,12 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const manualFilterLabelKeysRef = useRef<Set<string>>(new Set());
-  const filterToggleRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!fileInputRef.current) return;
     fileInputRef.current.setAttribute("webkitdirectory", "");
     fileInputRef.current.setAttribute("directory", "");
   }, []);
-
-  useEffect(() => {
-    if (!filterOpen) return;
-    const handleClick = (event: MouseEvent) => {
-      if (
-        filterToggleRef.current &&
-        !filterToggleRef.current.contains(event.target as Node)
-      ) {
-        setFilterOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [filterOpen]);
 
   const labelById = useMemo(() => {
     const map = new Map<number, LabelOption>();
@@ -825,29 +813,21 @@ const App: React.FC = () => {
     setFilterLabelKeys(new Set(exportLabelKeys));
   }, [exportLabelKeys, filterUseExportSelection]);
 
-  const refreshImages = useCallback(async () => {
-    if (selectedProjectId === null) return;
-    setLoading(true);
-    try {
-      await fetchJson(`/api/projects/${selectedProjectId}/rescan`, {
-        method: "POST",
+  useEffect(() => {
+    const availableCategoryIds = new Set(categories.map((category) => category.id));
+    setUnlabeledCategoryIds((prev) => {
+      let changed = false;
+      const next = new Set<number>();
+      prev.forEach((id) => {
+        if (availableCategoryIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
       });
-      const imagesRes = await fetchJson<ImagesResponse>(
-        `/api/projects/${selectedProjectId}/images`
-      );
-      const normalized = normalizeImages(imagesRes.images);
-      setImages(normalized);
-      setImagesProjectId(selectedProjectId);
-      updateProjectCounts(selectedProjectId, normalized);
-      setCurrentIndex((prev) =>
-        Math.min(prev, Math.max(normalized.length - 1, 0))
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to refresh images");
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedProjectId, updateProjectCounts]);
+      return changed ? next : prev;
+    });
+  }, [categories]);
 
   const handleFilesChange = useCallback(
     async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -907,10 +887,18 @@ const App: React.FC = () => {
     [images]
   );
 
-  const unlabeledCount = useMemo(
-    () => images.filter((item) => Object.keys(item.labels).length === 0).length,
-    [images]
-  );
+  const unlabeledCategoryCounts = useMemo(() => {
+    const counts = new Map<number, number>();
+    categories.forEach((category) => counts.set(category.id, 0));
+    images.forEach((item) => {
+      categories.forEach((category) => {
+        if ((item.labels[category.id]?.length || 0) === 0) {
+          counts.set(category.id, (counts.get(category.id) || 0) + 1);
+        }
+      });
+    });
+    return counts;
+  }, [categories, images]);
 
   const progressPercent = images.length
     ? Math.round((labeledCount / images.length) * 100)
@@ -918,35 +906,58 @@ const App: React.FC = () => {
 
   const filteredIndexes = useMemo(() => {
     if (!images.length) return [] as number[];
-    if (showUnlabeledOnly) {
-      return images
-        .map((item, index) =>
-          Object.keys(item.labels).length === 0 ? index : -1
-        )
-        .filter((index) => index >= 0);
-    }
-    if (!filterEnabled || filterLabelKeys.size === 0) {
+    const selectedUnlabeledCategories = Array.from(unlabeledCategoryIds);
+    const hasUnlabeledCategoryFilter = selectedUnlabeledCategories.length > 0;
+    const hasLabelFilter = filterEnabled && filterLabelKeys.size > 0;
+    if (!hasLabelFilter && !hasUnlabeledCategoryFilter) {
       return images.map((_, index) => index);
     }
-    const selected = Array.from(filterLabelKeys);
+    const selected = hasLabelFilter ? Array.from(filterLabelKeys) : [];
+    const selectedByCategory = new Map<string, string[]>();
+    selected.forEach((key) => {
+      const separatorIndex = key.indexOf(LABEL_KEY_SEPARATOR);
+      const categoryName =
+        separatorIndex >= 0 ? key.slice(0, separatorIndex) : "";
+      if (!categoryName) return;
+      const list = selectedByCategory.get(categoryName) || [];
+      list.push(key);
+      selectedByCategory.set(categoryName, list);
+    });
     const categoryNameById = new Map<number, string>();
     categories.forEach((category) => {
       categoryNameById.set(category.id, category.name);
     });
     return images
       .map((item, index) => {
-        const itemLabels = Object.values(item.labels)
-          .flat()
-          .map((label) => {
-            const categoryName = categoryNameById.get(label.category_id);
-            if (!categoryName) return null;
-            return buildLabelKey(categoryName, label.label_name);
-          })
-          .filter((key): key is string => Boolean(key));
-        if (filterMode === "all") {
-          return selected.every((id) => itemLabels.includes(id)) ? index : -1;
+        if (hasLabelFilter) {
+          const itemLabels = Object.values(item.labels)
+            .flat()
+            .map((label) => {
+              const categoryName = categoryNameById.get(label.category_id);
+              if (!categoryName) return null;
+              return buildLabelKey(categoryName, label.label_name);
+            })
+            .filter((key): key is string => Boolean(key));
+          const itemLabelSet = new Set(itemLabels);
+          const labelMatch =
+            filterMode === "all"
+              ? Array.from(selectedByCategory.values()).every((keys) =>
+                  keys.some((key) => itemLabelSet.has(key))
+                )
+              : selected.some((key) => itemLabelSet.has(key));
+          if (!labelMatch) {
+            return -1;
+          }
         }
-        return selected.some((id) => itemLabels.includes(id)) ? index : -1;
+        if (hasUnlabeledCategoryFilter) {
+          const missingSelectedCategory = selectedUnlabeledCategories.some(
+            (categoryId) => (item.labels[categoryId]?.length || 0) === 0
+          );
+          if (!missingSelectedCategory) {
+            return -1;
+          }
+        }
+        return index;
       })
       .filter((index) => index >= 0);
   }, [
@@ -955,10 +966,12 @@ const App: React.FC = () => {
     filterLabelKeys,
     filterMode,
     images,
-    showUnlabeledOnly,
+    unlabeledCategoryIds,
   ]);
 
-  const hasActiveFilter = filterEnabled || showUnlabeledOnly;
+  const hasActiveLabelSelection = filterEnabled && filterLabelKeys.size > 0;
+  const hasActiveUnlabeledSelection = unlabeledCategoryIds.size > 0;
+  const hasActiveFilter = hasActiveLabelSelection || hasActiveUnlabeledSelection;
   const hasFilteredResults = filteredIndexes.length > 0;
   const showFilteredEmpty =
     hasActiveFilter && images.length > 0 && !hasFilteredResults;
@@ -1580,20 +1593,49 @@ const App: React.FC = () => {
     setExportLabelKeys(new Set());
   }, []);
 
-  const toggleFilterLabel = useCallback((labelKey: string) => {
+  const toggleFilterLabel = useCallback((labelKey: string, checked: boolean) => {
     setFilterLabelKeys((prev) => {
       const next = new Set(prev);
-      if (next.has(labelKey)) {
-        next.delete(labelKey);
-      } else {
+      if (checked) {
         next.add(labelKey);
+      } else {
+        next.delete(labelKey);
       }
       return next;
     });
+    if (checked) {
+      setFilterEnabled(true);
+    }
   }, []);
 
   const clearFilterLabels = useCallback(() => {
     setFilterLabelKeys(new Set());
+  }, []);
+
+  const toggleUnlabeledCategory = useCallback(
+    (categoryId: number, checked: boolean) => {
+      setUnlabeledCategoryIds((prev) => {
+        const next = new Set(prev);
+        if (checked) {
+          next.add(categoryId);
+        } else {
+          next.delete(categoryId);
+        }
+        return next;
+      });
+      if (checked) {
+        setActiveCategoryId(categoryId);
+        const category = categories.find((item) => item.id === categoryId);
+        if (category) {
+          setActiveCategoryName(category.name);
+        }
+      }
+    },
+    [categories]
+  );
+
+  const clearUnlabeledCategories = useCallback(() => {
+    setUnlabeledCategoryIds(new Set());
   }, []);
 
   const handleFilterUseExportSelection = useCallback(
@@ -2018,152 +2060,246 @@ const App: React.FC = () => {
           </div>
         </div>
         <div className="actions">
-          <div
-            className="filter-toggle"
-            ref={filterToggleRef}
-            onMouseEnter={() => setFilterOpen(true)}
-            onMouseLeave={() => setFilterOpen(false)}
-          >
-            <button
-              className={`btn ghost filter-trigger${
-                filterEnabled ? " active" : ""
-              }`}
-              onClick={() => {
-                if (!filterEnabled) {
-                  setFilterEnabled(true);
-                }
-                setFilterOpen((prev) => !prev);
-              }}
-              type="button"
-              aria-pressed={filterEnabled}
-              aria-expanded={filterOpen}
-            >
-              <span
-                className={`filter-dot${filterEnabled ? " active" : ""}`}
-                aria-hidden="true"
+          <div className="actions-group actions-left">
+            <label className="btn primary file-button">
+              {uploading ? "Uploading..." : "Upload Folder"}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={SUPPORTED_EXTENSIONS.join(",")}
+                multiple
+                onChange={handleFilesChange}
+                disabled={uploading}
               />
-              <span>Filter</span>
-            </button>
-            {filterOpen && (
-              <div className="filter-dropdown">
-                <label className="checkbox filter-active">
-                  <input
-                    type="checkbox"
-                    checked={filterEnabled}
-                    onChange={(event) => setFilterEnabled(event.target.checked)}
-                  />
-                  <span>Filter active</span>
-                </label>
-                <div className="filter-mode">
-                  <button
-                    className={`btn small ${
-                      filterMode === "any" ? "primary" : "ghost"
-                    }`}
-                    onClick={() => setFilterMode("any")}
-                    type="button"
-                  >
-                    Any
-                  </button>
-                  <button
-                    className={`btn small ${
-                      filterMode === "all" ? "primary" : "ghost"
-                    }`}
-                    onClick={() => setFilterMode("all")}
-                    type="button"
-                  >
-                    All
-                  </button>
-                  <button
-                    className="btn ghost small"
-                    onClick={clearFilterLabels}
-                    disabled={filterUseExportSelection}
-                    type="button"
-                  >
-                    Clear
-                  </button>
-                </div>
-                <label className="checkbox filter-use-export">
-                  <input
-                    type="checkbox"
-                    checked={filterUseExportSelection}
-                    onChange={(event) =>
-                      handleFilterUseExportSelection(event.target.checked)
-                    }
-                  />
-                  <span>Use export selection</span>
-                </label>
-                {filterUseExportSelection ? (
-                  <div className="filter-note subtle">
-                    Export selection drives the filter.
+            </label>
+          </div>
+
+          <div className="actions-group actions-center">
+            <div className="filter-toggle">
+              <button
+                className={`btn ghost filter-trigger${
+                  filterEnabled ? " active" : ""
+                }`}
+                onClick={() => setFilterOpen((prev) => !prev)}
+                type="button"
+                aria-pressed={filterEnabled}
+                aria-expanded={filterOpen}
+              >
+                <span
+                  className={`filter-dot${filterEnabled ? " active" : ""}`}
+                  aria-hidden="true"
+                />
+                <span>Filter</span>
+              </button>
+              {filterOpen && (
+                <div className="filter-dropdown">
+                  <div className="filter-dropdown-header">
+                    <div className="filter-dropdown-title">Filters</div>
+                    <button
+                      className="filter-close"
+                      onClick={() => setFilterOpen(false)}
+                      type="button"
+                      aria-label="Close filters"
+                    >
+                      x
+                    </button>
                   </div>
+                  <div className="filter-switch-row">
+                    <span className="filter-active-label">Filter active</span>
+                    <button
+                      className={`filter-switch${
+                        filterEnabled ? " active" : ""
+                      }`}
+                      onClick={() => setFilterEnabled((prev) => !prev)}
+                      type="button"
+                      role="switch"
+                      aria-checked={filterEnabled}
+                      aria-label="Filter active"
+                    >
+                      <span className="filter-switch-thumb" aria-hidden="true" />
+                    </button>
+                  </div>
+                  <div className="filter-switch-row">
+                    <span className="filter-active-label">
+                      Use export selection
+                    </span>
+                    <button
+                      className={`filter-switch${
+                        filterUseExportSelection ? " active" : ""
+                      }`}
+                      onClick={() =>
+                        handleFilterUseExportSelection(!filterUseExportSelection)
+                      }
+                      type="button"
+                      role="switch"
+                      aria-checked={filterUseExportSelection}
+                      aria-label="Use export selection"
+                    >
+                      <span className="filter-switch-thumb" aria-hidden="true" />
+                    </button>
+                  </div>
+                  {filterUseExportSelection ? (
+                    <div className="filter-note subtle">
+                      Export selection drives the filter.
+                    </div>
+                  ) : null}
+                  <div className="filter-mode">
+                    <button
+                      className={`btn small filter-mode-tooltip ${
+                        filterMode === "any" ? "primary" : "ghost"
+                      }`}
+                      onClick={() => setFilterMode("any")}
+                      type="button"
+                      data-tooltip="Any: show images that match at least one selected label."
+                      aria-label="Any: show images that match at least one selected label."
+                    >
+                      Any
+                    </button>
+                    <button
+                      className={`btn small filter-mode-tooltip ${
+                        filterMode === "all" ? "primary" : "ghost"
+                      }`}
+                      onClick={() => setFilterMode("all")}
+                      type="button"
+                      data-tooltip="All: show images that match each selected category (at least one selected label per category)."
+                      aria-label="All: show images that match each selected category (at least one selected label per category)."
+                    >
+                      All
+                    </button>
+                    <button
+                      className="btn ghost small"
+                      onClick={clearFilterLabels}
+                      disabled={filterUseExportSelection}
+                      type="button"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  {categories.map((category) => (
+                    <div key={category.id} className="filter-category">
+                      <div className="filter-category-name">{category.name}</div>
+                      <div className="filter-labels">
+                        {category.labels.map((label) => (
+                          <label key={label.id} className="checkbox">
+                            <input
+                              type="checkbox"
+                              checked={filterLabelKeys.has(
+                                buildLabelKey(category.name, label.name)
+                              )}
+                              onChange={(event) =>
+                                toggleFilterLabel(
+                                  buildLabelKey(category.name, label.name),
+                                  event.target.checked
+                                )
+                              }
+                              disabled={filterUseExportSelection}
+                            />
+                            <span>
+                              {label.name} ({labelCounts.get(label.id) || 0})
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="unlabeled-toggle">
+              <button
+                className={`btn ghost toggle unlabeled-trigger${
+                  unlabeledCategoryIds.size ? " active" : ""
+                }`}
+                onClick={() => setUnlabeledOpen((prev) => !prev)}
+                type="button"
+                aria-expanded={unlabeledOpen}
+                aria-label="Unlabeled"
+              >
+                <span
+                  className={`unlabeled-dot${
+                    unlabeledCategoryIds.size ? " active" : ""
+                  }`}
+                  aria-hidden="true"
+                />
+                <span>Unlabeled</span>
+                {unlabeledCategoryIds.size ? (
+                  <span className="unlabeled-count">
+                    ({unlabeledCategoryIds.size})
+                  </span>
                 ) : null}
-                {categories.map((category) => (
-                  <div key={category.id} className="filter-category">
-                    <div className="filter-category-name">{category.name}</div>
-                    <div className="filter-labels">
-                      {category.labels.map((label) => (
-                        <label key={label.id} className="checkbox">
+              </button>
+              {unlabeledOpen && (
+                <div className="filter-dropdown unlabeled-dropdown">
+                  <div className="filter-dropdown-header">
+                    <div className="filter-dropdown-title">
+                      Unlabeled Categories
+                    </div>
+                    <button
+                      className="filter-close"
+                      onClick={() => setUnlabeledOpen(false)}
+                      type="button"
+                      aria-label="Close unlabeled categories"
+                    >
+                      x
+                    </button>
+                  </div>
+                  <div className="filter-note subtle">
+                    Show images that are missing labels in selected categories.
+                  </div>
+                  <div className="unlabeled-actions">
+                    <button
+                      className="btn ghost small"
+                      onClick={clearUnlabeledCategories}
+                      disabled={!unlabeledCategoryIds.size}
+                      type="button"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  {categories.length ? (
+                    <div className="unlabeled-categories">
+                      {categories.map((category) => (
+                        <label key={category.id} className="checkbox">
                           <input
                             type="checkbox"
-                            checked={filterLabelKeys.has(
-                              buildLabelKey(category.name, label.name)
-                            )}
-                            onChange={() =>
-                              toggleFilterLabel(
-                                buildLabelKey(category.name, label.name)
+                            checked={unlabeledCategoryIds.has(category.id)}
+                            onChange={(event) =>
+                              toggleUnlabeledCategory(
+                                category.id,
+                                event.target.checked
                               )
                             }
-                            disabled={filterUseExportSelection}
                           />
                           <span>
-                            {label.name} ({labelCounts.get(label.id) || 0})
+                            {category.name} (
+                            {unlabeledCategoryCounts.get(category.id) || 0})
                           </span>
                         </label>
                       ))}
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                  ) : (
+                    <div className="subtle">
+                      Add categories first to use unlabeled-by-category
+                      filtering.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-          <label className="btn primary file-button">
-            {uploading ? "Uploading..." : "Upload Folder"}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={SUPPORTED_EXTENSIONS.join(",")}
-              multiple
-              onChange={handleFilesChange}
-              disabled={uploading}
-            />
-          </label>
-          <button
-            className={`btn ghost toggle${
-              showUnlabeledOnly ? " active" : ""
-            }`}
-            onClick={() => setShowUnlabeledOnly((prev) => !prev)}
-            type="button"
-          >
-            Unlabeled{unlabeledCount ? ` (${unlabeledCount})` : ""}
-          </button>
-          <button
-            className="btn ghost"
-            onClick={refreshImages}
-            disabled={!selectedProjectId || loading}
-            type="button"
-          >
-            Refresh
-          </button>
-          <button
-            className="btn ghost"
-            onClick={handleExport}
-            disabled={!exportProjectIds.size || exporting}
-            type="button"
-          >
-            {exporting
-              ? "Preparing preview..."
-              : `Preview CSV${exportProjectIds.size > 1 ? " (" + exportProjectIds.size + ")" : ""}`}
-          </button>
+
+          <div className="actions-group actions-right">
+            <button
+              className="btn ghost"
+              onClick={handleExport}
+              disabled={!exportProjectIds.size || exporting}
+              type="button"
+            >
+              {exporting
+                ? "Preparing preview..."
+                : `Preview CSV${exportProjectIds.size > 1 ? " (" + exportProjectIds.size + ")" : ""}`}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -2194,7 +2330,7 @@ const App: React.FC = () => {
                 style={{ width: `${progressPercent}%` }}
               />
             </div>
-            {filterEnabled || showUnlabeledOnly ? (
+            {hasActiveFilter ? (
               <div className="filter-status">
                 Showing {filteredIndexes.length} of {images.length} images
               </div>
@@ -2229,7 +2365,7 @@ const App: React.FC = () => {
               <div className="subtle">
                 No images match the current filters. Adjust the filter
                 selection, turn off <strong>Filter active</strong>, or toggle
-                off <strong>Unlabeled</strong>.
+                off unlabeled category selections.
               </div>
             </div>
           ) : currentItem ? (
