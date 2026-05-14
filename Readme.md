@@ -109,7 +109,7 @@ npm run dev
 
 ### Lab Sync (Multiple Laptops)
 
-Yes, network mode is the right approach for synchronization:
+approach for synchronization:
 - run one central container on one machine/server,
 - let all laptops connect to that one instance,
 - keep one shared DB and upload store inside that container's volumes.
