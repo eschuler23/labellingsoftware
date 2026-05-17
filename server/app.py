@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import shutil
 import urllib.parse
 from pathlib import Path
@@ -128,6 +130,11 @@ def project_dir(project: dict) -> Path:
     return UPLOADS_DIR / project["storage_dir"]
 
 
+def csv_cell_has_label(value: str, label: str) -> bool:
+    labels = [part.strip() for part in value.split(";")]
+    return label in labels
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
@@ -197,6 +204,109 @@ def api_upload_project(
     watcher.watch_project(project["id"], storage_dir)
 
     return {"project": project}
+
+
+@app.post("/api/projects/{project_id}/csv-folder")
+async def api_create_project_from_csv(
+    project_id: int,
+    csv_file: UploadFile = File(...),
+    filename_column: str = Form(...),
+    label_column: str = Form(...),
+    label_value: str = Form(...),
+    project_name: str | None = Form(default=None),
+) -> dict[str, Any]:
+    source_project = ensure_project(project_id)
+    filename_column = filename_column.strip()
+    label_column = label_column.strip()
+    label_value = label_value.strip()
+    if not filename_column or not label_column or not label_value:
+        raise HTTPException(status_code=400, detail="CSV selection is incomplete")
+
+    raw = await csv_file.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV has no header row")
+    if filename_column not in reader.fieldnames:
+        raise HTTPException(status_code=400, detail="Filename column not found")
+    if label_column not in reader.fieldnames:
+        raise HTTPException(status_code=400, detail="Label column not found")
+
+    selected_names: set[str] = set()
+    csv_rows = 0
+    matched_rows = 0
+    for row in reader:
+        csv_rows += 1
+        filename = (row.get(filename_column) or "").strip()
+        label_cell = (row.get(label_column) or "").strip()
+        if filename and csv_cell_has_label(label_cell, label_value):
+            matched_rows += 1
+            selected_names.add(filename)
+            selected_names.add(Path(filename).name)
+
+    if not selected_names:
+        raise HTTPException(
+            status_code=400,
+            detail="No CSV rows matched that label selection",
+        )
+
+    matched: list[tuple[dict, dict]] = []
+    for project in list_projects(include_storage_dir=True):
+        for item in list_images(project["id"]):
+            if item["rel_path"] in selected_names or item["filename"] in selected_names:
+                matched.append((project, item))
+    if not matched:
+        raise HTTPException(
+            status_code=400,
+            detail="No existing project images matched the selected CSV filenames",
+        )
+
+    default_name = f"{source_project['name']} - {label_value}"
+    new_project = create_project((project_name or default_name).strip() or default_name)
+    target_dir = project_dir(new_project)
+    target_root = target_dir.resolve()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    collected: list[tuple[str, str]] = []
+    copied_paths: set[str] = set()
+    for source_project_item, item in matched:
+        rel_path = sanitize_rel_path(item["rel_path"])
+        source_dir = project_dir(source_project_item)
+        source_root = source_dir.resolve()
+        source_path = (source_dir / rel_path).resolve()
+        target_path = (target_dir / rel_path).resolve()
+        if not source_path.is_relative_to(source_root) or not source_path.is_file():
+            continue
+        if not target_path.is_relative_to(target_root):
+            continue
+        if rel_path in copied_paths:
+            continue
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, target_path)
+        generate_thumbnail(target_path)
+        collected.append((rel_path, Path(rel_path).name))
+        copied_paths.add(rel_path)
+
+    if not collected:
+        delete_project(new_project["id"])
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        raise HTTPException(status_code=400, detail="No image files could be copied")
+
+    add_images(new_project["id"], collected)
+    watcher.watch_project(new_project["id"], target_dir)
+
+    refreshed_project = get_project(new_project["id"]) or new_project
+    return {
+        "project": refreshed_project,
+        "matched_rows": matched_rows,
+        "copied": len(collected),
+        "csv_rows": csv_rows,
+    }
 
 
 @app.delete("/api/projects/{project_id}")

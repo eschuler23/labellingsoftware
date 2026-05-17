@@ -93,6 +93,13 @@ type ProjectCounts = {
   categoryCounts: Map<string, number>;
 };
 
+type CsvImportResponse = {
+  project: Project;
+  matched_rows: number;
+  copied: number;
+  csv_rows: number;
+};
+
 type SchemaTemplateCategory = {
   name: string;
   labels: string[];
@@ -259,6 +266,81 @@ const buildLabelKey = (categoryName: string, labelName: string) =>
 type ExportTable = {
   header: string[];
   rows: string[][];
+};
+
+type CsvTable = {
+  headers: string[];
+  rows: Record<string, string>[];
+};
+
+const parseCsvText = (text: string): CsvTable => {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (inQuotes) {
+      if (char === '"' && next === '"') {
+        cell += '"';
+        index += 1;
+      } else if (char === '"') {
+        inQuotes = false;
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+    } else if (char === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+    } else if (char !== "\r") {
+      cell += char;
+    }
+  }
+
+  row.push(cell);
+  if (row.some((value) => value.length > 0)) {
+    rows.push(row);
+  }
+
+  const headers = (rows.shift() || []).map((header) => header.trim());
+  const records = rows.map((values) => {
+    const record: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      record[header] = values[index] || "";
+    });
+    return record;
+  });
+
+  return { headers, rows: records };
+};
+
+const getLabelValuesFromRows = (
+  rows: Record<string, string>[],
+  column: string
+) => {
+  const values = new Set<string>();
+  rows.forEach((row) => {
+    const cell = row[column] || "";
+    cell
+      .split(";")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .forEach((value) => values.add(value));
+  });
+  return Array.from(values).sort((a, b) => a.localeCompare(b));
 };
 
 const buildExportTable = (
@@ -703,6 +785,16 @@ const App: React.FC = () => {
   >(new Map());
   const [exportProjectsTouched, setExportProjectsTouched] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [csvImportFile, setCsvImportFile] = useState<File | null>(null);
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [csvRows, setCsvRows] = useState<Record<string, string>[]>([]);
+  const [csvFilenameColumn, setCsvFilenameColumn] = useState("");
+  const [csvLabelColumn, setCsvLabelColumn] = useState("");
+  const [csvLabelValue, setCsvLabelValue] = useState("");
+  const [csvProjectName, setCsvProjectName] = useState("");
+  const [csvImporting, setCsvImporting] = useState(false);
+  const [csvImportSummary, setCsvImportSummary] = useState<string | null>(null);
   const [deletingImage, setDeletingImage] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -732,6 +824,7 @@ const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const csvInputRef = useRef<HTMLInputElement | null>(null);
   const manualFilterLabelKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -1042,6 +1135,110 @@ const App: React.FC = () => {
     [loadProjects]
   );
 
+  const handleCsvFileChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0] || null;
+      event.target.value = "";
+      if (!file) return;
+
+      try {
+        const table = parseCsvText(await file.text());
+        if (!table.headers.length) {
+          setError("CSV has no header row.");
+          return;
+        }
+
+        const filenameColumn =
+          table.headers.find((header) => header.toLowerCase() === "filename") ||
+          table.headers.find((header) =>
+            ["file", "image", "path", "rel_path"].includes(header.toLowerCase())
+          ) ||
+          table.headers[0];
+        const labelColumn =
+          table.headers.find((header) => header !== filenameColumn) ||
+          table.headers[0];
+        const values = getLabelValuesFromRows(table.rows, labelColumn);
+
+        setCsvImportFile(file);
+        setCsvHeaders(table.headers);
+        setCsvRows(table.rows);
+        setCsvFilenameColumn(filenameColumn);
+        setCsvLabelColumn(labelColumn);
+        setCsvLabelValue(values[0] || "");
+        setCsvProjectName("");
+        setCsvImportSummary(null);
+        setCsvImportOpen(true);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to read CSV");
+      }
+    },
+    []
+  );
+
+  const resetCsvImport = useCallback(() => {
+    setCsvImportOpen(false);
+    setCsvImportFile(null);
+    setCsvHeaders([]);
+    setCsvRows([]);
+    setCsvFilenameColumn("");
+    setCsvLabelColumn("");
+    setCsvLabelValue("");
+    setCsvProjectName("");
+    setCsvImporting(false);
+    setCsvImportSummary(null);
+  }, []);
+
+  const handleCreateProjectFromCsv = useCallback(async () => {
+    if (!csvImportFile || selectedProjectId === null) return;
+    if (!csvFilenameColumn || !csvLabelColumn || !csvLabelValue) {
+      setError("Choose a filename column, label column, and label value.");
+      return;
+    }
+
+    const form = new FormData();
+    form.append("csv_file", csvImportFile, csvImportFile.name);
+    form.append("filename_column", csvFilenameColumn);
+    form.append("label_column", csvLabelColumn);
+    form.append("label_value", csvLabelValue);
+    if (csvProjectName.trim()) {
+      form.append("project_name", csvProjectName.trim());
+    }
+
+    setCsvImporting(true);
+    setError(null);
+    setCsvImportSummary(null);
+    try {
+      const response = await fetchJson<CsvImportResponse>(
+        `/api/projects/${selectedProjectId}/csv-folder`,
+        {
+          method: "POST",
+          body: form,
+        }
+      );
+      await loadProjects();
+      setSelectedProjectId(response.project.id);
+      setCsvImportSummary(
+        `Created "${response.project.name}" with ${response.copied} images from ${response.csv_rows} CSV rows.`
+      );
+      setCsvImportFile(null);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to create project from CSV"
+      );
+    } finally {
+      setCsvImporting(false);
+    }
+  }, [
+    csvFilenameColumn,
+    csvImportFile,
+    csvLabelColumn,
+    csvLabelValue,
+    csvProjectName,
+    loadProjects,
+    selectedProjectId,
+  ]);
+
   const labeledCount = useMemo(
     () => images.filter((item) => Object.keys(item.labels).length > 0).length,
     [images]
@@ -1141,6 +1338,10 @@ const App: React.FC = () => {
       : images[currentIndex] || null;
   const currentLabels = (categoryId: number) =>
     currentItem?.labels[categoryId] || [];
+  const csvLabelValues = useMemo(
+    () => getLabelValuesFromRows(csvRows, csvLabelColumn),
+    [csvLabelColumn, csvRows]
+  );
 
   useEffect(() => {
     if (!filteredIndexes.length) {
@@ -2379,6 +2580,16 @@ const App: React.FC = () => {
                 disabled={uploading}
               />
             </label>
+            <label className="btn primary file-button">
+              Upload CSV
+              <input
+                ref={csvInputRef}
+                type="file"
+                accept=".csv,text/csv"
+                onChange={handleCsvFileChange}
+                disabled={selectedProjectId === null || csvImporting}
+              />
+            </label>
           </div>
 
           <div className="actions-group actions-center">
@@ -2609,6 +2820,119 @@ const App: React.FC = () => {
           </div>
         </div>
       </header>
+
+      {csvImportOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="csv-import-modal" role="dialog" aria-modal="true">
+            <div className="csv-import-header">
+              <div>
+                <div className="section-title">Create Project From CSV</div>
+                <div className="subtle">
+                  Copy images whose CSV row has the selected label.
+                </div>
+              </div>
+              <button
+                className="btn ghost small"
+                onClick={resetCsvImport}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            {csvImportSummary ? (
+              <div className="success-banner">{csvImportSummary}</div>
+            ) : null}
+
+            {csvImportFile ? (
+              <>
+                <div className="csv-import-grid">
+                  <label className="field">
+                    <span>Filename column</span>
+                    <select
+                      value={csvFilenameColumn}
+                      onChange={(event) =>
+                        setCsvFilenameColumn(event.target.value)
+                      }
+                    >
+                      {csvHeaders.map((header) => (
+                        <option key={header} value={header}>
+                          {header}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Label column</span>
+                    <select
+                      value={csvLabelColumn}
+                      onChange={(event) => {
+                        const column = event.target.value;
+                        const values = getLabelValuesFromRows(csvRows, column);
+                        setCsvLabelColumn(column);
+                        setCsvLabelValue(values[0] || "");
+                      }}
+                    >
+                      {csvHeaders.map((header) => (
+                        <option key={header} value={header}>
+                          {header}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Required label</span>
+                    <select
+                      value={csvLabelValue}
+                      onChange={(event) => setCsvLabelValue(event.target.value)}
+                      disabled={!csvLabelValues.length}
+                    >
+                      {csvLabelValues.map((value) => (
+                        <option key={value} value={value}>
+                          {value}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>New project name</span>
+                    <input
+                      value={csvProjectName}
+                      onChange={(event) => setCsvProjectName(event.target.value)}
+                      placeholder={`Current project - ${csvLabelValue || "label"}`}
+                    />
+                  </label>
+                </div>
+
+                <div className="csv-import-meta">
+                  <span>{csvImportFile.name}</span>
+                  <span>{csvRows.length.toLocaleString()} rows</span>
+                </div>
+
+                <div className="csv-import-actions">
+                  <button
+                    className="btn primary"
+                    onClick={handleCreateProjectFromCsv}
+                    disabled={
+                      csvImporting ||
+                      selectedProjectId === null ||
+                      !csvLabelValue ||
+                      !csvLabelValues.length
+                    }
+                    type="button"
+                  >
+                    {csvImporting ? "Creating..." : "Create Project"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="subtle">
+                Select another CSV to create more image projects.
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       <div className="content">
         <aside className="card sidebar">
