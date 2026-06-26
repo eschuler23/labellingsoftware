@@ -95,6 +95,7 @@ type ProjectCounts = {
 
 type AppPage = "labeling" | "mapping";
 type MappingScope = "project" | "global";
+type CategorySyncMode = "current" | "all" | "selected";
 
 type MappingStatus = "deterministic" | "ambiguous" | "empty";
 
@@ -1086,6 +1087,14 @@ const App: React.FC = () => {
   const [globalMappingLoading, setGlobalMappingLoading] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [newCategory, setNewCategory] = useState("");
+  const [categorySyncOpen, setCategorySyncOpen] = useState(false);
+  const [categorySyncName, setCategorySyncName] = useState("");
+  const [categorySyncMode, setCategorySyncMode] =
+    useState<CategorySyncMode>("all");
+  const [categorySyncProjectIds, setCategorySyncProjectIds] = useState<
+    Set<number>
+  >(new Set());
+  const [categorySyncing, setCategorySyncing] = useState(false);
   const [newLabelByCategory, setNewLabelByCategory] = useState<
     Record<number, string>
   >({});
@@ -1921,23 +1930,88 @@ const App: React.FC = () => {
     [currentIndex, currentItem, images, selectedProjectId, updateProjectCounts]
   );
 
-  const handleAddCategory = useCallback(async () => {
+  const openCategorySyncModal = useCallback(() => {
     const name = newCategory.trim();
     if (!name || selectedProjectId === null) return;
-    try {
-      const response = await fetchJson<LabelSchemaResponse>(
-        `/api/projects/${selectedProjectId}/label-categories`,
-        {
-          method: "POST",
-          body: JSON.stringify({ name }),
+
+    setCategorySyncName(name);
+    setCategorySyncMode(projects.length > 1 ? "all" : "current");
+    setCategorySyncProjectIds(new Set([selectedProjectId]));
+    setCategorySyncOpen(true);
+    setError(null);
+  }, [newCategory, projects.length, selectedProjectId]);
+
+  const resetCategorySync = useCallback(() => {
+    setCategorySyncOpen(false);
+    setCategorySyncName("");
+    setCategorySyncMode("all");
+    setCategorySyncProjectIds(new Set());
+    setCategorySyncing(false);
+  }, []);
+
+  const toggleCategorySyncProject = useCallback(
+    (projectId: number, checked: boolean) => {
+      if (projectId === selectedProjectId) {
+        return;
+      }
+      setCategorySyncProjectIds((prev) => {
+        const next = new Set(prev);
+        if (checked) {
+          next.add(projectId);
+        } else {
+          next.delete(projectId);
         }
-      );
-      setCategories(response.categories);
+        return next;
+      });
+    },
+    [selectedProjectId]
+  );
+
+  const confirmAddCategory = useCallback(async () => {
+    const name = categorySyncName.trim();
+    if (!name || selectedProjectId === null) return;
+
+    const selectedIds =
+      categorySyncMode === "all"
+        ? projects.map((project) => project.id)
+        : categorySyncMode === "selected"
+          ? Array.from(categorySyncProjectIds)
+          : [selectedProjectId];
+    const projectIds = Array.from(new Set([selectedProjectId, ...selectedIds]));
+
+    try {
+      setCategorySyncing(true);
+      setError(null);
+      let currentProjectCategories: LabelCategory[] | null = null;
+      for (const projectId of projectIds) {
+        const response = await fetchJson<LabelSchemaResponse>(
+          `/api/projects/${projectId}/label-categories`,
+          {
+            method: "POST",
+            body: JSON.stringify({ name }),
+          }
+        );
+        if (projectId === selectedProjectId) {
+          currentProjectCategories = response.categories;
+        }
+      }
+      if (currentProjectCategories) {
+        setCategories(currentProjectCategories);
+      }
       setNewCategory("");
+      resetCategorySync();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add category");
+      setCategorySyncing(false);
     }
-  }, [newCategory, selectedProjectId]);
+  }, [
+    categorySyncMode,
+    categorySyncName,
+    categorySyncProjectIds,
+    projects,
+    resetCategorySync,
+    selectedProjectId,
+  ]);
 
   const handleRenameCategory = useCallback(async () => {
     if (editingCategoryId === null || selectedProjectId === null) return;
@@ -3149,6 +3223,19 @@ const App: React.FC = () => {
       : Boolean(mappingFineCategory && mappingCoarseCategory);
   const mappingDashboardLoading =
     loading || (mappingScope === "global" && globalMappingLoading);
+  const selectedProject = projects.find(
+    (project) => project.id === selectedProjectId
+  );
+  const categorySyncTargetCount =
+    categorySyncMode === "all"
+      ? projects.length
+      : categorySyncMode === "selected"
+        ? categorySyncProjectIds.size
+        : selectedProjectId === null
+          ? 0
+          : 1;
+  const canConfirmCategorySync =
+    categorySyncName.trim().length > 0 && categorySyncTargetCount > 0;
 
   return (
     <div className="app">
@@ -3542,6 +3629,123 @@ const App: React.FC = () => {
                 Select another CSV to create more image projects.
               </div>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {categorySyncOpen ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="csv-import-modal sync-category-modal" role="dialog" aria-modal="true">
+            <div className="csv-import-header">
+              <div>
+                <div className="section-title">Add Category</div>
+                <div className="subtle">
+                  Create "{categorySyncName}" in the current folder or sync it
+                  to other folders.
+                </div>
+              </div>
+              <button
+                className="btn ghost small"
+                onClick={resetCategorySync}
+                disabled={categorySyncing}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="sync-choice-list">
+              <button
+                className={`sync-choice${
+                  categorySyncMode === "current" ? " active" : ""
+                }`}
+                onClick={() => setCategorySyncMode("current")}
+                type="button"
+              >
+                <span>Current folder only</span>
+                <span className="subtle">
+                  {selectedProject?.name || "Selected folder"}
+                </span>
+              </button>
+              <button
+                className={`sync-choice${
+                  categorySyncMode === "all" ? " active" : ""
+                }`}
+                onClick={() => setCategorySyncMode("all")}
+                disabled={projects.length < 2}
+                type="button"
+              >
+                <span>All folders</span>
+                <span className="subtle">
+                  {projects.length.toLocaleString()} folders
+                </span>
+              </button>
+              <button
+                className={`sync-choice${
+                  categorySyncMode === "selected" ? " active" : ""
+                }`}
+                onClick={() => {
+                  setCategorySyncMode("selected");
+                  setCategorySyncProjectIds((prev) => {
+                    if (selectedProjectId === null || prev.has(selectedProjectId)) {
+                      return prev;
+                    }
+                    return new Set([selectedProjectId, ...prev]);
+                  });
+                }}
+                disabled={projects.length < 2}
+                type="button"
+              >
+                <span>Choose folders</span>
+                <span className="subtle">
+                  {categorySyncProjectIds.size.toLocaleString()} selected
+                </span>
+              </button>
+            </div>
+
+            {categorySyncMode === "selected" ? (
+              <div className="sync-project-list">
+                {projects.map((project) => {
+                  const isCurrent = project.id === selectedProjectId;
+                  return (
+                    <label key={project.id} className="checkbox sync-project">
+                      <input
+                        type="checkbox"
+                        checked={
+                          isCurrent || categorySyncProjectIds.has(project.id)
+                        }
+                        disabled={isCurrent || categorySyncing}
+                        onChange={(event) =>
+                          toggleCategorySyncProject(
+                            project.id,
+                            event.target.checked
+                          )
+                        }
+                      />
+                      <span>
+                        {project.name}
+                        {isCurrent ? " (current)" : ""}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            ) : null}
+
+            <div className="csv-import-actions">
+              <div className="subtle">
+                {categorySyncTargetCount.toLocaleString()} folder
+                {categorySyncTargetCount === 1 ? "" : "s"} selected
+              </div>
+              <button
+                className="btn primary"
+                onClick={confirmAddCategory}
+                disabled={categorySyncing || !canConfirmCategorySync}
+                type="button"
+              >
+                {categorySyncing ? "Adding..." : "Add Category"}
+              </button>
+            </div>
           </div>
         </div>
       ) : null}
@@ -4167,13 +4371,13 @@ const App: React.FC = () => {
                   onKeyDown={(event) => {
                     if (event.key === "Enter") {
                       event.preventDefault();
-                      handleAddCategory();
+                      openCategorySyncModal();
                     }
                   }}
                 />
                 <button
                   className="btn"
-                  onClick={handleAddCategory}
+                  onClick={openCategorySyncModal}
                   disabled={!newCategory.trim()}
                   type="button"
                 >
