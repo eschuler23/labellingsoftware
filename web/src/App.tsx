@@ -93,6 +93,54 @@ type ProjectCounts = {
   categoryCounts: Map<string, number>;
 };
 
+type AppPage = "labeling" | "mapping";
+type MappingScope = "project" | "global";
+
+type MappingStatus = "deterministic" | "ambiguous" | "empty";
+
+type MappingLabelRef = {
+  key: string;
+  label: string;
+};
+
+type MappingTargetLabelCandidate = {
+  key: string;
+  categoryName: string;
+  labelName: string;
+  displayName: string;
+  projectCount: number;
+};
+
+type MappingSample = {
+  fineLabels: MappingLabelRef[];
+  coarseLabels: MappingLabelRef[];
+};
+
+type MappingDistributionEntry = {
+  key: string;
+  label: string;
+  count: number;
+  percent: number;
+  kind: "coarse" | "missing" | "multiple";
+};
+
+type MappingValidationRow = {
+  fineLabelId: string;
+  fineLabelName: string;
+  total: number;
+  dominantLabel: string;
+  purity: number;
+  status: MappingStatus;
+  distribution: MappingDistributionEntry[];
+};
+
+type MappingProjectData = {
+  projectId: number;
+  projectName: string;
+  images: ImageItem[];
+  categories: LabelCategory[];
+};
+
 type CsvImportResponse = {
   project: Project;
   matched_rows: number;
@@ -262,6 +310,12 @@ const escapeHtml = (value: string) =>
 
 const buildLabelKey = (categoryName: string, labelName: string) =>
   `${categoryName}${LABEL_KEY_SEPARATOR}${labelName}`;
+
+const buildGlobalLabelKey = (categoryName: string, labelName: string) =>
+  buildLabelKey(categoryName, labelName);
+
+const formatGlobalLabel = (categoryName: string, labelName: string) =>
+  `${labelName} · ${categoryName}`;
 
 type ExportTable = {
   header: string[];
@@ -737,6 +791,273 @@ const buildProjectCountsFromResponse = (
   return { labelCounts, categoryCounts };
 };
 
+const buildMappingValidationRowsFromSamples = (
+  samples: MappingSample[],
+  fineLabelDefs: MappingLabelRef[],
+  coarseLabelDefs: MappingLabelRef[]
+): MappingValidationRow[] => {
+  const rowsByFineLabel = new Map<
+    string,
+    {
+      label: MappingLabelRef;
+      total: number;
+      counts: Map<string, MappingDistributionEntry>;
+    }
+  >();
+
+  fineLabelDefs.forEach((label) => {
+    const counts = new Map<string, MappingDistributionEntry>();
+    coarseLabelDefs.forEach((coarseLabel) => {
+      counts.set(coarseLabel.key, {
+        key: coarseLabel.key,
+        label: coarseLabel.label,
+        count: 0,
+        percent: 0,
+        kind: "coarse",
+      });
+    });
+    rowsByFineLabel.set(label.key, { label, total: 0, counts });
+  });
+
+  samples.forEach((sample) => {
+    const fineLabels = sample.fineLabels;
+    if (!fineLabels.length) return;
+
+    const coarseLabels = sample.coarseLabels;
+    let coarseKey = "";
+    let coarseLabel = "";
+    let kind: MappingDistributionEntry["kind"] = "coarse";
+
+    if (coarseLabels.length === 0) {
+      coarseKey = "__missing__";
+      coarseLabel = "Missing coarse label";
+      kind = "missing";
+    } else if (coarseLabels.length > 1) {
+      coarseKey = "__multiple__";
+      coarseLabel = "Multiple coarse labels";
+      kind = "multiple";
+    } else {
+      coarseKey = coarseLabels[0].key;
+      coarseLabel = coarseLabels[0].label;
+    }
+
+    fineLabels.forEach((fineLabel) => {
+      const row = rowsByFineLabel.get(fineLabel.key);
+      if (!row) return;
+      row.total += 1;
+      const existing = row.counts.get(coarseKey) || {
+        key: coarseKey,
+        label: coarseLabel,
+        count: 0,
+        percent: 0,
+        kind,
+      };
+      row.counts.set(coarseKey, {
+        ...existing,
+        count: existing.count + 1,
+      });
+    });
+  });
+
+  return Array.from(rowsByFineLabel.values())
+    .map(({ label, total, counts }) => {
+      const distribution = Array.from(counts.values()).map((entry) => ({
+        ...entry,
+        percent: total ? (entry.count / total) * 100 : 0,
+      }));
+      const dominant = distribution.reduce<MappingDistributionEntry | null>(
+        (best, entry) => {
+          if (!best || entry.count > best.count) return entry;
+          return best;
+        },
+        null
+      );
+      const purity = total && dominant ? dominant.count / total : 0;
+      const status: MappingStatus =
+        total === 0
+          ? "empty"
+          : purity === 1 && dominant?.kind === "coarse"
+            ? "deterministic"
+            : "ambiguous";
+
+      return {
+        fineLabelId: label.key,
+        fineLabelName: label.label,
+        total,
+        dominantLabel: dominant && dominant.count > 0 ? dominant.label : "No samples",
+        purity,
+        status,
+        distribution,
+      };
+    })
+    .sort((a, b) => {
+      if (a.status !== b.status) {
+        const order: Record<MappingStatus, number> = {
+          ambiguous: 0,
+          deterministic: 1,
+          empty: 2,
+        };
+        return order[a.status] - order[b.status];
+      }
+      if (a.purity !== b.purity) return a.purity - b.purity;
+      return a.fineLabelName.localeCompare(b.fineLabelName);
+    });
+};
+
+const buildMappingValidationRows = (
+  items: ImageItem[],
+  fineCategory: LabelCategory | undefined,
+  coarseCategory: LabelCategory | undefined
+): MappingValidationRow[] => {
+  if (!fineCategory || !coarseCategory || fineCategory.id === coarseCategory.id) {
+    return [];
+  }
+
+  const fineLabelDefs = fineCategory.labels.map((label) => ({
+    key: String(label.id),
+    label: label.name,
+  }));
+  const coarseLabelDefs = coarseCategory.labels.map((label) => ({
+    key: String(label.id),
+    label: label.name,
+  }));
+  const samples = items.map((item) => ({
+    fineLabels: (item.labels[fineCategory.id] || []).map((label) => ({
+      key: String(label.label_option_id),
+      label: label.label_name,
+    })),
+    coarseLabels: (item.labels[coarseCategory.id] || []).map((label) => ({
+      key: String(label.label_option_id),
+      label: label.label_name,
+    })),
+  }));
+
+  return buildMappingValidationRowsFromSamples(
+    samples,
+    fineLabelDefs,
+    coarseLabelDefs
+  );
+};
+
+const buildGlobalTargetLabelCandidates = (
+  projectData: MappingProjectData[]
+): MappingTargetLabelCandidate[] => {
+  const categoryProjectIds = new Map<string, Set<number>>();
+  const labelProjectIds = new Map<string, Set<number>>();
+  const labelMeta = new Map<string, { categoryName: string; labelName: string }>();
+
+  projectData.forEach((project) => {
+    project.categories.forEach((category) => {
+      const categoryProjects = categoryProjectIds.get(category.name) || new Set<number>();
+      categoryProjects.add(project.projectId);
+      categoryProjectIds.set(category.name, categoryProjects);
+
+      category.labels.forEach((label) => {
+        const key = buildGlobalLabelKey(category.name, label.name);
+        const labelProjects = labelProjectIds.get(key) || new Set<number>();
+        labelProjects.add(project.projectId);
+        labelProjectIds.set(key, labelProjects);
+        labelMeta.set(key, {
+          categoryName: category.name,
+          labelName: label.name,
+        });
+      });
+    });
+  });
+
+  return Array.from(labelProjectIds.entries())
+    .map(([key, projectIds]) => {
+      const meta = labelMeta.get(key);
+      if (!meta) return null;
+      const categoryProjects = categoryProjectIds.get(meta.categoryName);
+      if (!categoryProjects || categoryProjects.size < 2) return null;
+      if (projectIds.size !== categoryProjects.size) return null;
+      return {
+        key,
+        categoryName: meta.categoryName,
+        labelName: meta.labelName,
+        displayName: formatGlobalLabel(meta.categoryName, meta.labelName),
+        projectCount: projectIds.size,
+      };
+    })
+    .filter((candidate): candidate is MappingTargetLabelCandidate =>
+      Boolean(candidate)
+    )
+    .sort((a, b) => {
+      const categoryCompare = a.categoryName.localeCompare(b.categoryName);
+      if (categoryCompare !== 0) return categoryCompare;
+      return a.labelName.localeCompare(b.labelName);
+    });
+};
+
+const buildGlobalMappingValidationRows = (
+  projectData: MappingProjectData[],
+  selectedTargetKeys: Set<string>
+): MappingValidationRow[] => {
+  if (!selectedTargetKeys.size) {
+    return [];
+  }
+
+  const targetDefs = new Map<string, MappingLabelRef>();
+  const sourceDefs = new Map<string, MappingLabelRef>();
+  const samples: MappingSample[] = [];
+
+  projectData.forEach((project) => {
+    const labelRefByCategoryId = new Map<number, Map<number, MappingLabelRef>>();
+    const projectHasAllTargets = Array.from(selectedTargetKeys).every((key) =>
+      project.categories.some((category) =>
+        category.labels.some(
+          (label) => buildGlobalLabelKey(category.name, label.name) === key
+        )
+      )
+    );
+    if (!projectHasAllTargets) return;
+
+    project.categories.forEach((category) => {
+      const labelsById = new Map<number, MappingLabelRef>();
+      category.labels.forEach((label) => {
+        const key = buildGlobalLabelKey(category.name, label.name);
+        const ref = {
+          key,
+          label: formatGlobalLabel(category.name, label.name),
+        };
+        labelsById.set(label.id, ref);
+        if (selectedTargetKeys.has(key)) {
+          targetDefs.set(key, ref);
+        } else {
+          sourceDefs.set(key, ref);
+        }
+      });
+      labelRefByCategoryId.set(category.id, labelsById);
+    });
+
+    project.images.forEach((item) => {
+      const fineLabels: MappingLabelRef[] = [];
+      const coarseLabels: MappingLabelRef[] = [];
+      Object.values(item.labels).forEach((labels) => {
+        labels.forEach((label) => {
+          const ref = labelRefByCategoryId
+            .get(label.category_id)
+            ?.get(label.label_option_id);
+          if (!ref) return;
+          if (selectedTargetKeys.has(ref.key)) {
+            coarseLabels.push(ref);
+          } else {
+            fineLabels.push(ref);
+          }
+        });
+      });
+      samples.push({ fineLabels, coarseLabels });
+    });
+  });
+
+  return buildMappingValidationRowsFromSamples(
+    samples,
+    Array.from(sourceDefs.values()).sort((a, b) => a.label.localeCompare(b.label)),
+    Array.from(targetDefs.values()).sort((a, b) => a.label.localeCompare(b.label))
+  );
+};
+
 const App: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(
@@ -749,6 +1070,20 @@ const App: React.FC = () => {
   const [activeCategoryName, setActiveCategoryName] = useState<string | null>(
     null
   );
+  const [activePage, setActivePage] = useState<AppPage>("labeling");
+  const [mappingFineCategoryId, setMappingFineCategoryId] = useState<
+    number | null
+  >(null);
+  const [mappingCoarseCategoryId, setMappingCoarseCategoryId] = useState<
+    number | null
+  >(null);
+  const [mappingScope, setMappingScope] = useState<MappingScope>("global");
+  const [globalMappingTargetLabelKeys, setGlobalMappingTargetLabelKeys] =
+    useState<Set<string>>(new Set());
+  const [globalMappingData, setGlobalMappingData] = useState<
+    MappingProjectData[]
+  >([]);
+  const [globalMappingLoading, setGlobalMappingLoading] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [newCategory, setNewCategory] = useState("");
   const [newLabelByCategory, setNewLabelByCategory] = useState<
@@ -906,6 +1241,43 @@ const App: React.FC = () => {
     [updateProjectCounts]
   );
 
+  const loadGlobalMappingData = useCallback(async () => {
+    if (!projects.length) {
+      setGlobalMappingData([]);
+      return;
+    }
+
+    setGlobalMappingLoading(true);
+    setError(null);
+    try {
+      const results = await Promise.all(
+        projects.map(async (project) => {
+          const [imagesRes, schemaRes] = await Promise.all([
+            fetchJson<ImagesResponse>(`/api/projects/${project.id}/images`),
+            fetchJson<LabelSchemaResponse>(
+              `/api/projects/${project.id}/label-schema`
+            ),
+          ]);
+          return {
+            projectId: project.id,
+            projectName: project.name,
+            images: normalizeImages(imagesRes.images),
+            categories: schemaRes.categories,
+          };
+        })
+      );
+      setGlobalMappingData(results);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to load global mapping dashboard"
+      );
+    } finally {
+      setGlobalMappingLoading(false);
+    }
+  }, [projects]);
+
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
@@ -914,6 +1286,22 @@ const App: React.FC = () => {
     if (selectedProjectId === null) return;
     loadProjectData(selectedProjectId);
   }, [loadProjectData, selectedProjectId]);
+
+  useEffect(() => {
+    if (activePage !== "mapping" || mappingScope !== "global") return;
+    void loadGlobalMappingData();
+  }, [activePage, loadGlobalMappingData, mappingScope]);
+
+  useEffect(() => {
+    if (!globalMappingData.length || imagesProjectId === null) return;
+    setGlobalMappingData((prev) =>
+      prev.map((project) =>
+        project.projectId === imagesProjectId
+          ? { ...project, images, categories }
+          : project
+      )
+    );
+  }, [categories, globalMappingData.length, images, imagesProjectId]);
 
   useEffect(() => {
     setSchemaExplorerOpen(false);
@@ -1048,6 +1436,33 @@ const App: React.FC = () => {
       })
     );
   }, [activeCategoryId, activeCategoryName, categories, labelById]);
+
+  useEffect(() => {
+    const availableIds = new Set(categories.map((category) => category.id));
+    const firstCategoryId = categories[0]?.id ?? null;
+    const secondCategoryId = categories[1]?.id ?? null;
+
+    setMappingFineCategoryId((prev) =>
+      prev !== null && availableIds.has(prev) ? prev : firstCategoryId
+    );
+
+    setMappingCoarseCategoryId((prev) => {
+      const currentFineId =
+        mappingFineCategoryId !== null && availableIds.has(mappingFineCategoryId)
+          ? mappingFineCategoryId
+          : firstCategoryId;
+      if (
+        prev !== null &&
+        availableIds.has(prev) &&
+        prev !== currentFineId
+      ) {
+        return prev;
+      }
+      return categories.find((category) => category.id !== currentFineId)?.id ??
+        secondCategoryId ??
+        null;
+    });
+  }, [categories, mappingFineCategoryId]);
 
   useEffect(() => {
     if (!filterUseExportSelection) {
@@ -2558,6 +2973,183 @@ const App: React.FC = () => {
     return next;
   }, [categories, schemaExplorerGroups]);
 
+  const mappingFineCategory = useMemo(
+    () =>
+      categories.find((category) => category.id === mappingFineCategoryId),
+    [categories, mappingFineCategoryId]
+  );
+
+  const mappingCoarseCategory = useMemo(
+    () =>
+      categories.find((category) => category.id === mappingCoarseCategoryId),
+    [categories, mappingCoarseCategoryId]
+  );
+
+  const mappingRows = useMemo(
+    () =>
+      buildMappingValidationRows(
+        images,
+        mappingFineCategory,
+        mappingCoarseCategory
+      ),
+    [images, mappingCoarseCategory, mappingFineCategory]
+  );
+
+  const globalMappingTargetCandidates = useMemo(
+    () => buildGlobalTargetLabelCandidates(globalMappingData),
+    [globalMappingData]
+  );
+
+  useEffect(() => {
+    const available = new Set(
+      globalMappingTargetCandidates.map((candidate) => candidate.key)
+    );
+    setGlobalMappingTargetLabelKeys((prev) => {
+      const next = new Set<string>();
+      prev.forEach((key) => {
+        if (available.has(key)) {
+          next.add(key);
+        }
+      });
+      return next;
+    });
+  }, [globalMappingTargetCandidates]);
+
+  const globalMappingSelectedTargets = useMemo(
+    () =>
+      globalMappingTargetCandidates.filter((candidate) =>
+        globalMappingTargetLabelKeys.has(candidate.key)
+      ),
+    [globalMappingTargetCandidates, globalMappingTargetLabelKeys]
+  );
+
+  const globalMappingMatchingProjects = useMemo(() => {
+    if (!globalMappingTargetLabelKeys.size) {
+      return [] as MappingProjectData[];
+    }
+
+    return globalMappingData.filter((project) =>
+      Array.from(globalMappingTargetLabelKeys).every((key) =>
+        project.categories.some((category) =>
+          category.labels.some(
+            (label) => buildGlobalLabelKey(category.name, label.name) === key
+          )
+        )
+      )
+    );
+  }, [globalMappingData, globalMappingTargetLabelKeys]);
+
+  const globalMappingRows = useMemo(
+    () =>
+      buildGlobalMappingValidationRows(
+        globalMappingData,
+        globalMappingTargetLabelKeys
+      ),
+    [globalMappingData, globalMappingTargetLabelKeys]
+  );
+
+  const globalMappingCoverage = useMemo(() => {
+    if (!globalMappingTargetLabelKeys.size) {
+      return { matchingProjects: 0, totalProjects: projects.length, imageCount: 0 };
+    }
+
+    return {
+      matchingProjects: globalMappingMatchingProjects.length,
+      totalProjects: projects.length,
+      imageCount: globalMappingMatchingProjects.reduce(
+        (sum, project) => sum + project.images.length,
+        0
+      ),
+    };
+  }, [
+    globalMappingMatchingProjects,
+    globalMappingTargetLabelKeys.size,
+    projects.length,
+  ]);
+
+  const activeMappingRows =
+    mappingScope === "global" ? globalMappingRows : mappingRows;
+
+  const mappingSummary = useMemo(() => {
+    const deterministic = activeMappingRows.filter(
+      (row) => row.status === "deterministic"
+    ).length;
+    const ambiguous = activeMappingRows.filter(
+      (row) => row.status === "ambiguous"
+    ).length;
+    const empty = activeMappingRows.filter((row) => row.status === "empty").length;
+    const sampledRows = activeMappingRows.filter((row) => row.total > 0);
+    const totalSamples = sampledRows.reduce((sum, row) => sum + row.total, 0);
+    const weightedPurity = totalSamples
+      ? sampledRows.reduce((sum, row) => sum + row.purity * row.total, 0) /
+        totalSamples
+      : 0;
+    const deterministicSamples = sampledRows
+      .filter((row) => row.status === "deterministic")
+      .reduce((sum, row) => sum + row.total, 0);
+
+    return {
+      deterministic,
+      ambiguous,
+      empty,
+      totalSamples,
+      weightedPurity,
+      deterministicSamples,
+    };
+  }, [activeMappingRows]);
+
+  const handleMappingFineCategoryChange = useCallback(
+    (categoryId: number) => {
+      setMappingFineCategoryId(categoryId);
+      if (mappingCoarseCategoryId === categoryId) {
+        setMappingCoarseCategoryId(
+          categories.find((category) => category.id !== categoryId)?.id ?? null
+        );
+      }
+    },
+    [categories, mappingCoarseCategoryId]
+  );
+
+  const handleMappingCoarseCategoryChange = useCallback(
+    (categoryId: number) => {
+      setMappingCoarseCategoryId(categoryId);
+      if (mappingFineCategoryId === categoryId) {
+        setMappingFineCategoryId(
+          categories.find((category) => category.id !== categoryId)?.id ?? null
+        );
+      }
+    },
+    [categories, mappingFineCategoryId]
+  );
+
+  const toggleGlobalMappingTargetLabel = useCallback(
+    (key: string, checked: boolean) => {
+      setGlobalMappingTargetLabelKeys((prev) => {
+        const next = new Set(prev);
+        if (checked) {
+          next.add(key);
+        } else {
+          next.delete(key);
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const clearGlobalMappingTargetLabels = useCallback(() => {
+    setGlobalMappingTargetLabelKeys(new Set());
+  }, []);
+
+  const mappingCategoryCount =
+    mappingScope === "global" ? globalMappingTargetCandidates.length : categories.length;
+  const mappingHasCategorySelection =
+    mappingScope === "global"
+      ? globalMappingTargetLabelKeys.size > 0
+      : Boolean(mappingFineCategory && mappingCoarseCategory);
+  const mappingDashboardLoading =
+    loading || (mappingScope === "global" && globalMappingLoading);
+
   return (
     <div className="app">
       <header className="topbar">
@@ -2567,6 +3159,22 @@ const App: React.FC = () => {
             Multi-category labeling with SQLite + uploads
           </div>
         </div>
+        <nav className="page-tabs" aria-label="Primary views">
+          <button
+            className={`page-tab${activePage === "labeling" ? " active" : ""}`}
+            onClick={() => setActivePage("labeling")}
+            type="button"
+          >
+            Labeling
+          </button>
+          <button
+            className={`page-tab${activePage === "mapping" ? " active" : ""}`}
+            onClick={() => setActivePage("mapping")}
+            type="button"
+          >
+            Mapping Validation
+          </button>
+        </nav>
         <div className="actions">
           <div className="actions-group actions-left">
             <label className="btn primary file-button">
@@ -2592,6 +3200,7 @@ const App: React.FC = () => {
             </label>
           </div>
 
+          {activePage === "labeling" ? (
           <div className="actions-group actions-center">
             <div className="filter-toggle">
               <button
@@ -2805,7 +3414,9 @@ const App: React.FC = () => {
               )}
             </div>
           </div>
+          ) : null}
 
+          {activePage === "labeling" ? (
           <div className="actions-group actions-right">
             <button
               className="btn ghost"
@@ -2818,6 +3429,7 @@ const App: React.FC = () => {
                 : `Preview CSV${exportProjectIds.size > 1 ? " (" + exportProjectIds.size + ")" : ""}`}
             </button>
           </div>
+          ) : null}
         </div>
       </header>
 
@@ -2985,8 +3597,357 @@ const App: React.FC = () => {
           {error ? <div className="error-banner">{error}</div> : null}
         </aside>
 
-        <main className="card viewer">
-          {loading ? (
+        <main
+          className={`card viewer${
+            activePage === "mapping" ? " mapping-viewer" : ""
+          }`}
+        >
+          {activePage === "mapping" ? (
+            <div className="mapping-dashboard">
+              <div className="mapping-hero">
+                <div>
+                  <div className="section-title">Dataset Analysis</div>
+                  <h2>Label Mapping Validation</h2>
+                  <div className="subtle">
+                    Check whether labels map deterministically to selected
+                    first-class labels.
+                  </div>
+                </div>
+                <div className="mapping-controls">
+                  <label className="field">
+                    <span>Dashboard</span>
+                    <select
+                      value={mappingScope}
+                      onChange={(event) =>
+                        setMappingScope(event.target.value as MappingScope)
+                      }
+                    >
+                      <option value="global">Global Dashboard</option>
+                      <option value="project">Folder Dashboard</option>
+                    </select>
+                  </label>
+                  {mappingScope === "project" ? (
+                    <>
+                      <label className="field">
+                        <span>Source label category</span>
+                      <select
+                        value={mappingFineCategoryId ?? ""}
+                        onChange={(event) =>
+                          handleMappingFineCategoryChange(
+                            Number(event.target.value)
+                          )
+                        }
+                        disabled={categories.length < 2}
+                      >
+                        {categories.map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.name}
+                          </option>
+                        ))}
+                      </select>
+                      </label>
+                      <label className="field">
+                        <span>Target label category</span>
+                      <select
+                        value={mappingCoarseCategoryId ?? ""}
+                        onChange={(event) =>
+                          handleMappingCoarseCategoryChange(
+                            Number(event.target.value)
+                          )
+                        }
+                        disabled={categories.length < 2}
+                      >
+                        {categories.map((category) => (
+                          <option
+                            key={category.id}
+                            value={category.id}
+                            disabled={category.id === mappingFineCategoryId}
+                          >
+                            {category.name}
+                          </option>
+                        ))}
+                      </select>
+                      </label>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+
+              {mappingScope === "global" && !mappingDashboardLoading ? (
+                <div className="mapping-final-label-panel">
+                  <div className="mapping-panel-header">
+                    <div>
+                      <div className="section-title">First-Class Labels</div>
+                      <div className="subtle">
+                        Select the global target labels. Candidates qualify
+                        when the same category-label pair exists in every
+                        folder that uses that category.
+                      </div>
+                    </div>
+                    <button
+                      className="btn ghost small"
+                      onClick={clearGlobalMappingTargetLabels}
+                      disabled={!globalMappingTargetLabelKeys.size}
+                      type="button"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  {globalMappingTargetCandidates.length ? (
+                    <div className="mapping-final-labels">
+                      {globalMappingTargetCandidates.map((candidate) => (
+                        <label
+                          key={candidate.key}
+                          className="checkbox mapping-final-label"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={globalMappingTargetLabelKeys.has(
+                              candidate.key
+                            )}
+                            onChange={(event) =>
+                              toggleGlobalMappingTargetLabel(
+                                candidate.key,
+                                event.target.checked
+                              )
+                            }
+                          />
+                          <span>{candidate.displayName}</span>
+                          <span className="mapping-final-label-count">
+                            {candidate.projectCount}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="subtle">
+                      No labels qualify as global first-class labels yet.
+                    </div>
+                  )}
+                </div>
+              ) : null}
+
+              {mappingDashboardLoading ? (
+                <div className="empty-viewer">
+                  <div className="empty-title">
+                    {mappingScope === "global"
+                      ? "Loading folders..."
+                      : "Loading project..."}
+                  </div>
+                </div>
+              ) : mappingScope === "global" && mappingCategoryCount === 0 ? (
+                <div className="empty-viewer">
+                  <div className="empty-title">No global target labels</div>
+                  <div className="subtle">
+                    A global target label must appear as the same category-label
+                    pair in every folder that uses that category.
+                  </div>
+                </div>
+              ) : mappingScope === "project" && mappingCategoryCount < 2 ? (
+                <div className="empty-viewer">
+                  <div className="empty-title">Two label categories required</div>
+                  <div className="subtle">
+                    Add a fine-grained label category and a coarse class
+                    category before validating mappings.
+                  </div>
+                </div>
+              ) : !mappingHasCategorySelection ? (
+                <div className="empty-viewer">
+                  <div className="empty-title">
+                    {mappingScope === "global"
+                      ? "Choose first-class labels"
+                      : "Choose mapping categories"}
+                  </div>
+                  <div className="subtle">
+                    {mappingScope === "global"
+                      ? "Select one or more target labels before validating global mappings."
+                      : "Select different categories for source and target labels."}
+                  </div>
+                </div>
+              ) : mappingScope === "global" &&
+                globalMappingCoverage.matchingProjects === 0 ? (
+                <div className="empty-viewer">
+                  <div className="empty-title">No matching folders</div>
+                  <div className="subtle">
+                    No folder contains all selected first-class labels.
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="mapping-summary">
+                    {mappingScope === "global" ? (
+                      <div className="mapping-stat-card">
+                        <span>Folders analyzed</span>
+                        <strong>
+                          {globalMappingCoverage.matchingProjects.toLocaleString()}/
+                          {globalMappingCoverage.totalProjects.toLocaleString()}
+                        </strong>
+                      </div>
+                    ) : null}
+                    <div className="mapping-stat-card deterministic">
+                      <span>Deterministic labels</span>
+                      <strong>{mappingSummary.deterministic}</strong>
+                    </div>
+                    <div className="mapping-stat-card ambiguous">
+                      <span>Ambiguous labels</span>
+                      <strong>{mappingSummary.ambiguous}</strong>
+                    </div>
+                    <div className="mapping-stat-card">
+                      <span>Weighted purity</span>
+                      <strong>
+                        {(mappingSummary.weightedPurity * 100).toFixed(1)}%
+                      </strong>
+                    </div>
+                    <div className="mapping-stat-card">
+                      <span>Mapped samples</span>
+                      <strong>
+                        {mappingSummary.deterministicSamples.toLocaleString()}/
+                        {mappingSummary.totalSamples.toLocaleString()}
+                      </strong>
+                    </div>
+                  </div>
+                  {mappingScope === "global" ? (
+                    <div className="mapping-scope-note">
+                      Global dashboard uses{" "}
+                      {globalMappingCoverage.imageCount.toLocaleString()} images
+                      from folders that contain all selected first-class labels.
+                    </div>
+                  ) : null}
+
+                  <div className="mapping-grid">
+                    <section className="mapping-panel">
+                      <div className="mapping-panel-header">
+                        <div>
+                          <div className="section-title">Distribution Overview</div>
+                          <div className="subtle">
+                            Each row shows how one non-first-class label
+                            distributes across the selected targets.
+                          </div>
+                        </div>
+                        {mappingSummary.empty ? (
+                          <span className="mapping-badge empty">
+                            {mappingSummary.empty} no sample
+                          </span>
+                        ) : null}
+                      </div>
+                      <div className="mapping-distribution-list">
+                        {activeMappingRows.map((row) => {
+                          const visibleDistribution = row.distribution.filter(
+                            (entry) => entry.count > 0
+                          );
+                          return (
+                            <div
+                              key={row.fineLabelId}
+                              className={`mapping-distribution-row ${row.status}`}
+                            >
+                              <div className="mapping-row-top">
+                                <div>
+                                  <div className="mapping-row-label">
+                                    {row.fineLabelName}
+                                  </div>
+                                  <div className="subtle">
+                                    Dominant: {row.dominantLabel}
+                                  </div>
+                                </div>
+                                <span className={`mapping-badge ${row.status}`}>
+                                  {row.status === "deterministic"
+                                    ? "100% deterministic"
+                                    : row.status === "empty"
+                                      ? "No samples"
+                                      : `${(row.purity * 100).toFixed(1)}% purity`}
+                                </span>
+                              </div>
+                              <div className="mapping-stack">
+                                {visibleDistribution.length ? (
+                                  visibleDistribution.map((entry) => (
+                                    <div
+                                      key={`${row.fineLabelId}-${entry.key}`}
+                                      className={`mapping-stack-segment ${entry.kind}`}
+                                      style={{
+                                        width: `${Math.max(entry.percent, 0.6)}%`,
+                                      }}
+                                      title={`${entry.label}: ${entry.count} (${entry.percent.toFixed(1)}%)`}
+                                    >
+                                      {entry.percent >= 12 ? (
+                                        <span>{entry.label}</span>
+                                      ) : null}
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="mapping-stack-empty" />
+                                )}
+                              </div>
+                              <div className="mapping-segment-legend">
+                                {visibleDistribution.length ? (
+                                  visibleDistribution.map((entry) => (
+                                    <span
+                                      key={`${row.fineLabelId}-${entry.key}-legend`}
+                                      className={`mapping-legend-item ${entry.kind}`}
+                                    >
+                                      {entry.label}: {entry.count} (
+                                      {entry.percent.toFixed(1)}%)
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="mapping-legend-item">
+                                    No fine-label samples
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+
+                    <section className="mapping-panel">
+                      <div className="mapping-panel-header">
+                        <div>
+                          <div className="section-title">Mapping Summary</div>
+                          <div className="subtle">
+                            Deterministic rows have a one-to-one relationship
+                            with exactly one selected first-class label.
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mapping-table-wrap">
+                        <table className="mapping-table">
+                          <thead>
+                            <tr>
+                              <th>Fine label</th>
+                              <th>Dominant first-class label</th>
+                              <th>Purity</th>
+                              <th>Samples</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {activeMappingRows.map((row) => (
+                              <tr key={row.fineLabelId}>
+                                <td>{row.fineLabelName}</td>
+                                <td>{row.dominantLabel}</td>
+                                <td>{(row.purity * 100).toFixed(1)}%</td>
+                                <td>{row.total.toLocaleString()}</td>
+                                <td>
+                                  <span className={`mapping-badge ${row.status}`}>
+                                    {row.status === "deterministic"
+                                      ? "Deterministic"
+                                      : row.status === "empty"
+                                        ? "No samples"
+                                        : "Ambiguous"}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  </div>
+                </>
+              )}
+            </div>
+          ) : loading ? (
             <div className="empty-viewer">
               <div className="empty-title">Loading project...</div>
             </div>
