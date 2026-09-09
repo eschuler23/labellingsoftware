@@ -58,6 +58,22 @@ type ImagesResponse = {
   last_index: number;
 };
 
+type FilenameSearchResult = {
+  project_id: number;
+  project_name: string;
+  rel_path: string;
+  filename: string;
+};
+
+type FilenameSearchResponse = {
+  results: FilenameSearchResult[];
+};
+
+type ImageSearchTarget = {
+  projectId: number;
+  relPath: string;
+};
+
 type LabelSchemaResponse = {
   categories: LabelCategory[];
 };
@@ -1139,6 +1155,15 @@ const App: React.FC = () => {
   const [csvProjectName, setCsvProjectName] = useState("");
   const [csvImporting, setCsvImporting] = useState(false);
   const [csvImportSummary, setCsvImportSummary] = useState<string | null>(null);
+  const [filenameSearch, setFilenameSearch] = useState("");
+  const [filenameSearchResults, setFilenameSearchResults] = useState<
+    FilenameSearchResult[]
+  >([]);
+  const [filenameSearchOpen, setFilenameSearchOpen] = useState(false);
+  const [filenameSearchLoading, setFilenameSearchLoading] = useState(false);
+  const [filenameSearchMessage, setFilenameSearchMessage] = useState<
+    string | null
+  >(null);
   const [deletingImage, setDeletingImage] = useState(false);
   const [filterEnabled, setFilterEnabled] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -1169,6 +1194,7 @@ const App: React.FC = () => {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const csvInputRef = useRef<HTMLInputElement | null>(null);
+  const pendingImageSearchTargetRef = useRef<ImageSearchTarget | null>(null);
   const manualFilterLabelKeysRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -1236,11 +1262,21 @@ const App: React.FC = () => {
         setImagesProjectId(projectId);
         updateProjectCounts(projectId, normalized);
         setCategories(schemaRes.categories);
+        const searchTarget = pendingImageSearchTargetRef.current;
+        const targetIndex =
+          searchTarget?.projectId === projectId
+            ? normalized.findIndex(
+                (item) => item.rel_path === searchTarget.relPath
+              )
+            : -1;
         const safeIndex = Math.min(
           imagesRes.last_index || 0,
           Math.max(normalized.length - 1, 0)
         );
-        setCurrentIndex(safeIndex);
+        setCurrentIndex(targetIndex >= 0 ? targetIndex : safeIndex);
+        if (searchTarget?.projectId === projectId) {
+          pendingImageSearchTargetRef.current = null;
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load project");
       } finally {
@@ -1662,6 +1698,92 @@ const App: React.FC = () => {
     loadProjects,
     selectedProjectId,
   ]);
+
+  const openFilenameSearchResult = useCallback(
+    (result: FilenameSearchResult) => {
+      pendingImageSearchTargetRef.current = {
+        projectId: result.project_id,
+        relPath: result.rel_path,
+      };
+      setActivePage("labeling");
+      setFilterEnabled(false);
+      setUnlabeledCategoryIds(new Set());
+      setFilenameSearch(result.filename);
+      setFilenameSearchResults([]);
+      setFilenameSearchOpen(false);
+      setFilenameSearchMessage(null);
+
+      if (selectedProjectId === result.project_id) {
+        if (imagesProjectId === result.project_id) {
+          const targetIndex = images.findIndex(
+            (item) => item.rel_path === result.rel_path
+          );
+          if (targetIndex >= 0) {
+            setCurrentIndex(targetIndex);
+            pendingImageSearchTargetRef.current = null;
+            return;
+          }
+        }
+        void loadProjectData(result.project_id);
+        return;
+      }
+
+      setSelectedProjectId(result.project_id);
+    },
+    [images, imagesProjectId, loadProjectData, selectedProjectId]
+  );
+
+  const handleFilenameSearch = useCallback(
+    async (event?: React.FormEvent<HTMLFormElement>) => {
+      event?.preventDefault();
+      const query = filenameSearch.trim();
+      if (!query) {
+        setFilenameSearchResults([]);
+        setFilenameSearchMessage("Enter a filename to search.");
+        setFilenameSearchOpen(true);
+        return;
+      }
+
+      setFilenameSearchLoading(true);
+      setFilenameSearchMessage(null);
+      setError(null);
+      try {
+        const response = await fetchJson<FilenameSearchResponse>(
+          `/api/images/search?filename=${encodeURIComponent(query)}&limit=50`
+        );
+
+        if (response.results.length === 1) {
+          openFilenameSearchResult(response.results[0]);
+          return;
+        }
+
+        setFilenameSearchResults(response.results);
+        setFilenameSearchMessage(
+          response.results.length
+            ? `${response.results.length.toLocaleString()} matches found.`
+            : "No matching filenames found."
+        );
+        setFilenameSearchOpen(true);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to search filenames";
+        setFilenameSearchResults([]);
+        setFilenameSearchMessage(message);
+        setFilenameSearchOpen(true);
+        setError(message);
+      } finally {
+        setFilenameSearchLoading(false);
+      }
+    },
+    [filenameSearch, openFilenameSearchResult]
+  );
+
+  const clearFilenameSearch = useCallback(() => {
+    setFilenameSearch("");
+    setFilenameSearchResults([]);
+    setFilenameSearchMessage(null);
+    setFilenameSearchOpen(false);
+  }, []);
 
   const labeledCount = useMemo(
     () => images.filter((item) => Object.keys(item.labels).length > 0).length,
@@ -3262,6 +3384,80 @@ const App: React.FC = () => {
             Mapping Validation
           </button>
         </nav>
+        <form
+          className="filename-search"
+          onSubmit={handleFilenameSearch}
+          role="search"
+        >
+          <input
+            value={filenameSearch}
+            onChange={(event) => {
+              setFilenameSearch(event.target.value);
+              setFilenameSearchOpen(false);
+              setFilenameSearchMessage(null);
+            }}
+            onFocus={() => {
+              if (filenameSearchResults.length || filenameSearchMessage) {
+                setFilenameSearchOpen(true);
+              }
+            }}
+            placeholder="Search filename"
+            aria-label="Search filename across all projects"
+            disabled={!projects.length || filenameSearchLoading}
+          />
+          {filenameSearch ? (
+            <button
+              className="filename-search-clear"
+              onClick={clearFilenameSearch}
+              type="button"
+              aria-label="Clear filename search"
+            >
+              x
+            </button>
+          ) : null}
+          <button
+            className="btn ghost small"
+            disabled={!projects.length || filenameSearchLoading}
+            type="submit"
+          >
+            {filenameSearchLoading ? "Searching..." : "Search"}
+          </button>
+
+          {filenameSearchOpen ? (
+            <div className="filename-search-results">
+              <div className="filename-search-results-header">
+                <span>{filenameSearchMessage || "Search results"}</span>
+                <button
+                  className="filter-close"
+                  onClick={() => setFilenameSearchOpen(false)}
+                  type="button"
+                  aria-label="Close filename search results"
+                >
+                  x
+                </button>
+              </div>
+              {filenameSearchResults.length ? (
+                <div className="filename-search-list">
+                  {filenameSearchResults.map((result) => (
+                    <button
+                      key={`${result.project_id}-${result.rel_path}`}
+                      className="filename-search-result"
+                      onClick={() => openFilenameSearchResult(result)}
+                      type="button"
+                    >
+                      <span className="filename-search-name">
+                        {result.filename}
+                      </span>
+                      <span className="filename-search-path">
+                        {result.project_name} / {result.rel_path}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </form>
         <div className="actions">
           <div className="actions-group actions-left">
             <label className="btn primary file-button">

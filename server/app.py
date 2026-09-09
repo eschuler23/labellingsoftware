@@ -30,6 +30,7 @@ from .db import (
     list_label_counts,
     list_label_schema,
     list_projects,
+    search_images,
     set_image_label,
     update_category_order,
     update_category,
@@ -152,6 +153,15 @@ def on_shutdown() -> None:
 @app.get("/api/projects")
 def api_list_projects() -> dict[str, Any]:
     return {"projects": list_projects(include_storage_dir=False)}
+
+
+@app.get("/api/images/search")
+def api_search_images(filename: str, limit: int = 50) -> dict[str, Any]:
+    query = filename.strip()
+    if not query:
+        return {"results": []}
+    safe_limit = min(max(limit, 1), 100)
+    return {"results": search_images(query, safe_limit)}
 
 
 @app.post("/api/projects/upload")

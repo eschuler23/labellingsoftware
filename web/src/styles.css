@@ -96,6 +96,126 @@ body {
   background: rgba(255, 255, 255, 0.55);
 }
 
+.filename-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 360px;
+  min-width: 240px;
+}
+
+.filename-search input {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(31, 27, 22, 0.12);
+  background: #fff;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.filename-search input:focus {
+  outline: 2px solid rgba(249, 115, 22, 0.32);
+  border-color: rgba(249, 115, 22, 0.6);
+}
+
+.filename-search-clear {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  background: rgba(31, 27, 22, 0.06);
+  color: var(--muted);
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.filename-search-clear:hover {
+  background: rgba(31, 27, 22, 0.1);
+  color: var(--ink);
+}
+
+.filename-search-results {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 30;
+  width: min(520px, 90vw);
+  max-height: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(234, 223, 206, 0.95);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.filename-search-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.filename-search-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  max-height: 340px;
+}
+
+.filename-search-result {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: rgba(31, 27, 22, 0.04);
+  color: inherit;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.filename-search-result:hover {
+  border-color: rgba(249, 115, 22, 0.45);
+  background: rgba(255, 237, 213, 0.7);
+}
+
+.filename-search-name {
+  max-width: 100%;
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filename-search-path {
+  max-width: 100%;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .actions {
   display: flex;
   gap: 12px;
@@ -1886,6 +2006,16 @@ body {
 
   .page-tab {
     flex: 1;
+  }
+
+  .filename-search {
+    width: 100%;
+    flex: none;
+    min-width: 0;
+  }
+
+  .filename-search-results {
+    width: 100%;
   }
 
   .actions-group {

@@ -493,6 +493,46 @@ def list_images(project_id: int) -> list[dict]:
     return list(grouped.values())
 
 
+def escape_like(value: str) -> str:
+    return (
+        value.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
+def search_images(filename: str, limit: int = 50) -> list[dict]:
+    query = filename.strip()
+    if not query:
+        return []
+
+    pattern = f"%{escape_like(query)}%"
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                p.id AS project_id,
+                p.name AS project_name,
+                images.rel_path,
+                images.filename
+            FROM images
+            JOIN projects p
+                ON images.project_id = p.id
+            WHERE images.filename LIKE ? ESCAPE '\\'
+                OR images.rel_path LIKE ? ESCAPE '\\'
+            ORDER BY
+                lower(images.filename) = lower(?) DESC,
+                lower(images.rel_path) = lower(?) DESC,
+                p.created_at DESC,
+                images.rel_path
+            LIMIT ?
+            """,
+            (pattern, pattern, query, query, limit),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
 def list_label_schema(project_id: int) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
