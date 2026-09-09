@@ -91,6 +91,7 @@ class CategoryRename(BaseModel):
 
 class CategoryDelete(BaseModel):
     category_id: int
+    scope: str | None = None
 
 
 class CategoryOrderUpdate(BaseModel):
@@ -487,7 +488,9 @@ def api_update_label_category(project_id: int, payload: CategoryRename) -> dict[
 def api_delete_label_category(project_id: int, payload: CategoryDelete) -> dict[str, Any]:
     ensure_project(project_id)
     try:
-        categories = delete_category(project_id, payload.category_id)
+        categories = delete_category(
+            project_id, payload.category_id, payload.scope or "project"
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"categories": categories}

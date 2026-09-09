@@ -74,6 +74,11 @@ type ImageSearchTarget = {
   relPath: string;
 };
 
+type CategoryRemovalTarget = {
+  id: number;
+  name: string;
+};
+
 type LabelSchemaResponse = {
   categories: LabelCategory[];
 };
@@ -112,6 +117,7 @@ type ProjectCounts = {
 type AppPage = "labeling" | "mapping";
 type MappingScope = "project" | "global";
 type CategorySyncMode = "current" | "all" | "selected";
+type CategoryRemovalScope = "project" | "all";
 
 type MappingStatus = "deterministic" | "ambiguous" | "empty";
 
@@ -1111,6 +1117,9 @@ const App: React.FC = () => {
     Set<number>
   >(new Set());
   const [categorySyncing, setCategorySyncing] = useState(false);
+  const [categoryRemovalTarget, setCategoryRemovalTarget] =
+    useState<CategoryRemovalTarget | null>(null);
+  const [categoryRemoving, setCategoryRemoving] = useState(false);
   const [newLabelByCategory, setNewLabelByCategory] = useState<
     Record<number, string>
   >({});
@@ -2160,33 +2169,43 @@ const App: React.FC = () => {
     }
   }, [editingCategoryId, editingCategoryName, selectedProjectId]);
 
-  const handleDeleteCategory = useCallback(
-    async (categoryId: number) => {
-      if (selectedProjectId === null) return;
-      if (!window.confirm("Delete this category and all its labels?")) return;
+  const handleDeleteCategory = useCallback((category: LabelCategory) => {
+    setCategoryRemovalTarget({ id: category.id, name: category.name });
+  }, []);
+
+  const confirmRemoveCategory = useCallback(
+    async (scope: CategoryRemovalScope) => {
+      if (selectedProjectId === null || !categoryRemovalTarget) return;
       try {
+        setCategoryRemoving(true);
         const response = await fetchJson<LabelSchemaResponse>(
           `/api/projects/${selectedProjectId}/label-categories`,
           {
             method: "DELETE",
-            body: JSON.stringify({ category_id: categoryId }),
+            body: JSON.stringify({
+              category_id: categoryRemovalTarget.id,
+              scope,
+            }),
           }
         );
         setCategories(response.categories);
         setImages((prev) =>
           prev.map((item) => {
             const nextLabels = { ...item.labels };
-            delete nextLabels[categoryId];
+            delete nextLabels[categoryRemovalTarget.id];
             return { ...item, labels: nextLabels };
           })
         );
+        setCategoryRemovalTarget(null);
       } catch (err) {
         setError(
-          err instanceof Error ? err.message : "Failed to delete category"
+          err instanceof Error ? err.message : "Failed to remove category"
         );
+      } finally {
+        setCategoryRemoving(false);
       }
     },
-    [selectedProjectId]
+    [categoryRemovalTarget, selectedProjectId]
   );
 
   const handleAddLabel = useCallback(
@@ -2230,43 +2249,6 @@ const App: React.FC = () => {
       setError(err instanceof Error ? err.message : "Failed to rename label");
     }
   }, [editingLabelId, editingLabelName, selectedProjectId]);
-
-  const handleDeleteLabel = useCallback(
-    async (labelId: number) => {
-      if (selectedProjectId === null) return;
-      if (!window.confirm("Delete this label and clear it from images?"))
-        return;
-      try {
-        const response = await fetchJson<LabelSchemaResponse>(
-          `/api/projects/${selectedProjectId}/label-options`,
-          {
-            method: "DELETE",
-            body: JSON.stringify({ label_id: labelId }),
-          }
-        );
-        setCategories(response.categories);
-        setImages((prev) =>
-          prev.map((item) => {
-            const nextLabels = { ...item.labels };
-            Object.entries(nextLabels).forEach(([catId, labels]) => {
-              const remaining = labels.filter(
-                (label) => label.label_option_id !== labelId
-              );
-              if (remaining.length > 0) {
-                nextLabels[Number(catId)] = remaining;
-              } else {
-                delete nextLabels[Number(catId)];
-              }
-            });
-            return { ...item, labels: nextLabels };
-          })
-        );
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to delete label");
-      }
-    },
-    [selectedProjectId]
-  );
 
   const skip = useCallback(() => {
     if (!filteredIndexes.length) {
@@ -2764,7 +2746,7 @@ const App: React.FC = () => {
       const sourceNames = group.projectNames.join(", ");
       if (
         !window.confirm(
-          `Use schema from ${sourceNames}? This will sync the current project to this schema and remove categories/labels that are not part of it.`
+          `Use schema from ${sourceNames}? This will add missing categories and labels while keeping existing ones.`
         )
       ) {
         return;
@@ -2775,10 +2757,6 @@ const App: React.FC = () => {
 
       try {
         let currentCats = [...categories];
-        const sourceCategoryNames = new Set(
-          group.categories.map((category) => category.name)
-        );
-
         for (const sourceCategory of group.categories) {
           let targetCategory = currentCats.find(
             (category) => category.name === sourceCategory.name
@@ -2798,28 +2776,6 @@ const App: React.FC = () => {
             );
           }
 
-          if (!targetCategory) continue;
-
-          const sourceLabelNames = new Set(sourceCategory.labels);
-          for (const existingLabel of [...targetCategory.labels]) {
-            if (sourceLabelNames.has(existingLabel.name)) {
-              continue;
-            }
-            const res = await fetchJson<LabelSchemaResponse>(
-              `/api/projects/${selectedProjectId}/label-options`,
-              {
-                method: "DELETE",
-                body: JSON.stringify({
-                  label_id: existingLabel.id,
-                }),
-              }
-            );
-            currentCats = res.categories;
-          }
-
-          targetCategory = currentCats.find(
-            (category) => category.name === sourceCategory.name
-          );
           if (!targetCategory) continue;
 
           for (const sourceLabelName of sourceCategory.labels) {
@@ -2845,22 +2801,6 @@ const App: React.FC = () => {
             );
             if (!targetCategory) break;
           }
-        }
-
-        for (const existingCategory of [...currentCats]) {
-          if (sourceCategoryNames.has(existingCategory.name)) {
-            continue;
-          }
-          const res = await fetchJson<LabelSchemaResponse>(
-            `/api/projects/${selectedProjectId}/label-categories`,
-            {
-              method: "DELETE",
-              body: JSON.stringify({
-                category_id: existingCategory.id,
-              }),
-            }
-          );
-          currentCats = res.categories;
         }
 
         const orderedCategoryIds = group.categories
@@ -3946,6 +3886,69 @@ const App: React.FC = () => {
         </div>
       ) : null}
 
+      {categoryRemovalTarget ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="csv-import-modal sync-category-modal" role="dialog" aria-modal="true">
+            <div className="csv-import-header">
+              <div>
+                <div className="section-title">Remove Category</div>
+                <div className="subtle">
+                  Remove "{categoryRemovalTarget.name}" from the current folder
+                  or from every folder using this shared category.
+                </div>
+              </div>
+              <button
+                className="btn ghost small"
+                onClick={() => setCategoryRemovalTarget(null)}
+                disabled={categoryRemoving}
+                type="button"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="sync-choice-list remove-choice-list">
+              <button
+                className="sync-choice active"
+                onClick={() => void confirmRemoveCategory("project")}
+                disabled={categoryRemoving}
+                type="button"
+              >
+                <span>Current folder only</span>
+                <span className="subtle">
+                  Keeps labels and assignments stored for reattachment.
+                </span>
+              </button>
+              <button
+                className="sync-choice"
+                onClick={() => void confirmRemoveCategory("all")}
+                disabled={categoryRemoving}
+                type="button"
+              >
+                <span>All folders</span>
+                <span className="subtle">
+                  Hides this category everywhere without deleting labels.
+                </span>
+              </button>
+            </div>
+
+            <div className="csv-import-actions">
+              <div className="subtle">
+                Existing labels and image assignments are preserved.
+              </div>
+              <button
+                className="btn ghost"
+                onClick={() => setCategoryRemovalTarget(null)}
+                disabled={categoryRemoving}
+                type="button"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="content">
         <aside className="card sidebar">
           <div className="sidebar-header">
@@ -4644,7 +4647,8 @@ const App: React.FC = () => {
                       </div>
                     </div>
                     <div className="subtle">
-                      Green means items will be added. Red means items will be removed.
+                      Green means items will be added. Existing categories and
+                      labels are kept.
                     </div>
                     {schemaExplorerLoading ? (
                       <div className="subtle">Loading schemas...</div>
@@ -4686,12 +4690,12 @@ const App: React.FC = () => {
                                           ) : null}
                                           {diff.removedCategories > 0 ? (
                                             <span className="schema-badge removed">
-                                              -{diff.removedCategories} categories
+                                              keeps {diff.removedCategories} extra categories
                                             </span>
                                           ) : null}
                                           {diff.removedLabels > 0 ? (
                                             <span className="schema-badge removed">
-                                              -{diff.removedLabels} labels
+                                              keeps {diff.removedLabels} extra labels
                                             </span>
                                           ) : null}
                                         </>
@@ -4721,23 +4725,23 @@ const App: React.FC = () => {
                                   const categoryLabelTone =
                                     status === "added"
                                       ? "added"
-                                      : status === "removed"
-                                        ? "removed"
-                                        : "same";
+                                      : "same";
+                                  const displayStatus =
+                                    status === "removed" ? "same" : status;
                                   return (
                                     <div
                                       key={`${group.signature}-${categoryDiff.name}-${status}`}
-                                      className={`schema-group-category ${status}`}
+                                      className={`schema-group-category ${displayStatus}`}
                                     >
                                       <div className="schema-group-category-head">
-                                        <div className={`schema-group-category-name ${status}`}>
+                                        <div className={`schema-group-category-name ${displayStatus}`}>
                                           {categoryDiff.name}
                                         </div>
-                                        <span className={`schema-mini-badge ${status}`}>
+                                        <span className={`schema-mini-badge ${displayStatus}`}>
                                           {status === "added"
                                             ? "New"
                                             : status === "removed"
-                                              ? "Removed"
+                                              ? "Kept"
                                             : status === "changed"
                                               ? "Changed"
                                               : "Same"}
@@ -4763,15 +4767,15 @@ const App: React.FC = () => {
                                             </div>
                                           ) : null}
                                           {categoryDiff.removedLabels.length > 0 ? (
-                                            <div className="schema-diff-line removed">
+                                            <div className="schema-diff-line same">
                                               <span className="schema-diff-prefix">
-                                                Removes:
+                                                Keeps:
                                               </span>
                                               <div className="schema-label-list">
                                                 {categoryDiff.removedLabels.map((label) => (
                                                   <span
                                                     key={`${group.signature}-${categoryDiff.name}-remove-${label}`}
-                                                    className="schema-label-chip removed"
+                                                    className="schema-label-chip same"
                                                   >
                                                     {label}
                                                   </span>
@@ -4789,9 +4793,7 @@ const App: React.FC = () => {
                                           className={
                                             status === "added"
                                               ? "schema-diff-line added"
-                                              : status === "removed"
-                                                ? "schema-diff-line removed"
-                                                : "schema-diff-line same"
+                                              : "schema-diff-line same"
                                           }
                                         >
                                           <div className="schema-label-list">
@@ -4910,11 +4912,11 @@ const App: React.FC = () => {
                                 <button
                                   className="btn ghost small"
                                   onClick={() =>
-                                    handleDeleteCategory(category.id)
+                                    handleDeleteCategory(category)
                                   }
                                   type="button"
                                 >
-                                  Delete
+                                  Remove
                                 </button>
                               </>
                             )}
@@ -5005,13 +5007,6 @@ const App: React.FC = () => {
                                       type="button"
                                     >
                                       Edit
-                                    </button>
-                                    <button
-                                      className="btn ghost small"
-                                      onClick={() => handleDeleteLabel(label.id)}
-                                      type="button"
-                                    >
-                                      Delete
                                     </button>
                                   </>
                                 )}

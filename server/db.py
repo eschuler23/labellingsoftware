@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import shutil
 import uuid
 from contextlib import contextmanager
 from datetime import datetime
@@ -11,6 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 UPLOADS_DIR = BASE_DIR / "uploads"
 DB_PATH = DATA_DIR / "labeling.db"
+BACKUP_DIR = DATA_DIR / "backups"
 
 DEFAULT_CATEGORY_NAME = "Quality"
 
@@ -70,7 +72,7 @@ def _ensure_base_schema(conn: sqlite3.Connection) -> None:
     )
 
 
-def _ensure_schema(conn: sqlite3.Connection) -> None:
+def _ensure_local_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS label_categories (
@@ -109,8 +111,56 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS label_categories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(normalized_name)
+        );
+
+        CREATE TABLE IF NOT EXISTS label_options (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            normalized_name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(category_id, normalized_name),
+            FOREIGN KEY(category_id) REFERENCES label_categories(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS project_label_categories (
+            project_id INTEGER NOT NULL,
+            category_id INTEGER NOT NULL,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            PRIMARY KEY(project_id, category_id),
+            FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY(category_id) REFERENCES label_categories(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS image_labels (
+            project_id INTEGER NOT NULL,
+            rel_path TEXT NOT NULL,
+            category_id INTEGER NOT NULL,
+            label_option_id INTEGER NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(project_id, rel_path, category_id, label_option_id),
+            FOREIGN KEY(project_id, rel_path) REFERENCES images(project_id, rel_path) ON DELETE CASCADE,
+            FOREIGN KEY(category_id) REFERENCES label_categories(id),
+            FOREIGN KEY(label_option_id) REFERENCES label_options(id)
+        );
+        """
+    )
+
+
 def _ensure_category_sort_order(conn: sqlite3.Connection) -> None:
     if not _table_exists(conn, "label_categories"):
+        return
+    if not _table_has_column(conn, "label_categories", "project_id"):
         return
     if _table_has_column(conn, "label_categories", "sort_order"):
         return
@@ -165,7 +215,7 @@ def _migrate_image_labels_multi(conn: sqlite3.Connection) -> None:
         return
 
     conn.execute("ALTER TABLE image_labels RENAME TO image_labels_legacy")
-    _ensure_schema(conn)
+    _ensure_local_schema(conn)
     conn.execute(
         """
         INSERT INTO image_labels
@@ -174,16 +224,25 @@ def _migrate_image_labels_multi(conn: sqlite3.Connection) -> None:
         FROM image_labels_legacy
         """
     )
-    conn.execute("DROP TABLE IF EXISTS image_labels_legacy")
 
 
 def _migrate_legacy_schema(conn: sqlite3.Connection) -> None:
+    has_shared_categories = _table_exists(conn, "label_categories") and not _table_has_column(
+        conn, "label_categories", "project_id"
+    )
+    has_legacy_options = _table_exists(conn, "label_options") and not _table_has_column(
+        conn, "label_options", "category_id"
+    )
+    has_legacy_labels = _table_exists(conn, "labels") and not has_shared_categories
+    if not has_legacy_options and not has_legacy_labels:
+        return
+
     if _table_exists(conn, "label_options") and not _table_has_column(
         conn, "label_options", "category_id"
     ):
         conn.execute("ALTER TABLE label_options RENAME TO label_options_legacy")
 
-    _ensure_schema(conn)
+    _ensure_local_schema(conn)
 
     if _table_exists(conn, "label_options_legacy"):
         projects = conn.execute("SELECT id FROM projects").fetchall()
@@ -221,8 +280,6 @@ def _migrate_legacy_schema(conn: sqlite3.Connection) -> None:
                     """,
                     (project_id, category_id, legacy["name"], legacy["created_at"] or now),
                 )
-
-        conn.execute("DROP TABLE IF EXISTS label_options_legacy")
 
     if _table_exists(conn, "labels") and _image_labels_empty(conn):
         now = utc_now()
@@ -287,13 +344,237 @@ def _migrate_legacy_schema(conn: sqlite3.Connection) -> None:
             )
 
 
+def normalize_schema_name(name: str) -> str:
+    return " ".join(name.strip().casefold().split())
+
+
+def _backup_database(reason: str) -> Path | None:
+    if not DB_PATH.exists():
+        return None
+
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    backup_path = BACKUP_DIR / f"labeling-{stamp}-{reason}.db"
+    shutil.copy2(DB_PATH, backup_path)
+    return backup_path
+
+
+def _needs_shared_schema_migration(conn: sqlite3.Connection) -> bool:
+    if not _table_exists(conn, "label_categories"):
+        return False
+    return _table_has_column(conn, "label_categories", "project_id")
+
+
+def _migrate_shared_schema(conn: sqlite3.Connection) -> None:
+    if not _needs_shared_schema_migration(conn):
+        return
+
+    _backup_database("before-shared-labels")
+    now = utc_now()
+    old_categories = [
+        dict(row)
+        for row in conn.execute(
+            """
+            SELECT id, project_id, name, sort_order, created_at
+            FROM label_categories
+            ORDER BY created_at, id
+            """
+        ).fetchall()
+    ]
+    old_options = [
+        dict(row)
+        for row in conn.execute(
+            """
+            SELECT id, project_id, category_id, name, created_at
+            FROM label_options
+            ORDER BY created_at, id
+            """
+        ).fetchall()
+    ]
+    old_image_labels = [
+        dict(row)
+        for row in conn.execute(
+            """
+            SELECT project_id, rel_path, category_id, label_option_id, updated_at
+            FROM image_labels
+            """
+        ).fetchall()
+    ]
+
+    if _table_exists(conn, "label_categories_project_local"):
+        raise RuntimeError("Shared schema migration backup table already exists")
+
+    conn.execute("ALTER TABLE label_categories RENAME TO label_categories_project_local")
+    conn.execute("ALTER TABLE label_options RENAME TO label_options_project_local")
+    conn.execute("ALTER TABLE image_labels RENAME TO image_labels_project_local")
+    _ensure_schema(conn)
+
+    categories_by_norm: dict[str, dict] = {}
+    old_category_to_shared: dict[int, int] = {}
+    for category in old_categories:
+        normalized = normalize_schema_name(category["name"])
+        if not normalized:
+            normalized = f"__legacy_category_{category['id']}"
+        display_name = category["name"].strip() or f"Legacy Category {category['id']}"
+        existing = categories_by_norm.get(normalized)
+        if not existing:
+            existing = {
+                "id": category["id"],
+                "name": display_name,
+                "normalized_name": normalized,
+                "created_at": category["created_at"] or now,
+            }
+            categories_by_norm[normalized] = existing
+        old_category_to_shared[category["id"]] = existing["id"]
+
+    for category in categories_by_norm.values():
+        conn.execute(
+            """
+            INSERT INTO label_categories (id, name, normalized_name, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                category["id"],
+                category["name"],
+                category["normalized_name"],
+                category["created_at"],
+            ),
+        )
+
+    project_category_links: dict[tuple[int, int], dict] = {}
+    for category in old_categories:
+        shared_category_id = old_category_to_shared.get(category["id"])
+        if shared_category_id is None:
+            continue
+        key = (category["project_id"], shared_category_id)
+        existing = project_category_links.get(key)
+        sort_order = category["sort_order"] if category["sort_order"] is not None else 0
+        if existing and existing["sort_order"] <= sort_order:
+            continue
+        project_category_links[key] = {
+            "project_id": category["project_id"],
+            "category_id": shared_category_id,
+            "sort_order": sort_order,
+            "created_at": category["created_at"] or now,
+        }
+
+    for link in project_category_links.values():
+        conn.execute(
+            """
+            INSERT INTO project_label_categories
+            (project_id, category_id, sort_order, created_at)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                link["project_id"],
+                link["category_id"],
+                link["sort_order"],
+                link["created_at"],
+            ),
+        )
+
+    options_by_category_norm: dict[tuple[int, str], dict] = {}
+    old_option_to_shared: dict[int, int] = {}
+    for option in old_options:
+        shared_category_id = old_category_to_shared.get(option["category_id"])
+        if shared_category_id is None:
+            continue
+        normalized = normalize_schema_name(option["name"])
+        if not normalized:
+            normalized = f"__legacy_label_{option['id']}"
+        display_name = option["name"].strip() or f"Legacy Label {option['id']}"
+        key = (shared_category_id, normalized)
+        existing = options_by_category_norm.get(key)
+        if not existing:
+            existing = {
+                "id": option["id"],
+                "category_id": shared_category_id,
+                "name": display_name,
+                "normalized_name": normalized,
+                "created_at": option["created_at"] or now,
+            }
+            options_by_category_norm[key] = existing
+        old_option_to_shared[option["id"]] = existing["id"]
+
+    for option in options_by_category_norm.values():
+        conn.execute(
+            """
+            INSERT INTO label_options
+            (id, category_id, name, normalized_name, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                option["id"],
+                option["category_id"],
+                option["name"],
+                option["normalized_name"],
+                option["created_at"],
+            ),
+        )
+
+    old_label_count = len(old_image_labels)
+    for label in old_image_labels:
+        shared_category_id = old_category_to_shared.get(label["category_id"])
+        shared_option_id = old_option_to_shared.get(label["label_option_id"])
+        if shared_category_id is None or shared_option_id is None:
+            raise RuntimeError("Shared schema migration could not map an image label")
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO image_labels
+            (project_id, rel_path, category_id, label_option_id, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                label["project_id"],
+                label["rel_path"],
+                shared_category_id,
+                shared_option_id,
+                label["updated_at"] or now,
+            ),
+        )
+
+    new_label_count = conn.execute(
+        "SELECT COUNT(*) AS count FROM image_labels"
+    ).fetchone()["count"]
+    duplicate_collapses = old_label_count - new_label_count
+    if duplicate_collapses < 0:
+        raise RuntimeError("Shared schema migration created extra image labels")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_migration_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            detail TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO schema_migration_events (name, created_at, detail)
+        VALUES (?, ?, ?)
+        """,
+        (
+            "shared-labels",
+            now,
+            f"old_image_labels={old_label_count}; new_image_labels={new_label_count}; duplicate_collapses={duplicate_collapses}",
+        ),
+    )
+
+    problems = conn.execute("PRAGMA foreign_key_check").fetchall()
+    if problems:
+        raise RuntimeError("Shared schema migration failed foreign key validation")
+
+
 def init_db() -> None:
     with get_conn() as conn:
         _ensure_base_schema(conn)
         _migrate_legacy_schema(conn)
         _migrate_image_labels_multi(conn)
-        _ensure_schema(conn)
         _ensure_category_sort_order(conn)
+        _migrate_shared_schema(conn)
+        _ensure_schema(conn)
 
 
 def create_project(name: str) -> dict:
@@ -354,7 +635,14 @@ def list_projects(include_storage_dir: bool = False) -> list[dict]:
                 p.updated_at,
                 p.last_index,
                 (SELECT COUNT(*) FROM images WHERE project_id = p.id) AS image_count,
-                (SELECT COUNT(DISTINCT rel_path) FROM image_labels WHERE project_id = p.id) AS labeled_count
+                (
+                    SELECT COUNT(DISTINCT image_labels.rel_path)
+                    FROM image_labels
+                    JOIN project_label_categories plc
+                        ON image_labels.project_id = plc.project_id
+                        AND image_labels.category_id = plc.category_id
+                    WHERE image_labels.project_id = p.id
+                ) AS labeled_count
             FROM projects p
             ORDER BY p.created_at DESC
             """
@@ -456,15 +744,20 @@ def list_images(project_id: int) -> list[dict]:
                 images.filename,
                 image_labels.category_id,
                 image_labels.label_option_id,
+                plc.category_id AS visible_category_id,
                 label_options.name AS label_name
             FROM images
             LEFT JOIN image_labels
                 ON images.project_id = image_labels.project_id
                 AND images.rel_path = image_labels.rel_path
+            LEFT JOIN project_label_categories plc
+                ON image_labels.project_id = plc.project_id
+                AND image_labels.category_id = plc.category_id
             LEFT JOIN label_options
                 ON image_labels.label_option_id = label_options.id
+                AND image_labels.category_id = label_options.category_id
             WHERE images.project_id = ?
-            ORDER BY images.rel_path, image_labels.category_id, image_labels.label_option_id
+            ORDER BY images.rel_path, plc.sort_order, image_labels.category_id, image_labels.label_option_id
             """,
             (project_id,),
         ).fetchall()
@@ -481,7 +774,12 @@ def list_images(project_id: int) -> list[dict]:
             }
             grouped[rel_path] = item
 
-        if row["category_id"] is not None and row["label_option_id"] is not None:
+        if (
+            row["category_id"] is not None
+            and row["label_option_id"] is not None
+            and row["visible_category_id"] is not None
+            and row["label_name"] is not None
+        ):
             item["labels"].append(
                 {
                     "category_id": row["category_id"],
@@ -542,11 +840,13 @@ def list_label_schema(project_id: int) -> list[dict]:
                 c.name AS category_name,
                 l.id AS label_id,
                 l.name AS label_name
-            FROM label_categories c
+            FROM project_label_categories plc
+            JOIN label_categories c
+                ON plc.category_id = c.id
             LEFT JOIN label_options l
                 ON c.id = l.category_id
-            WHERE c.project_id = ?
-            ORDER BY c.sort_order, c.id, l.id
+            WHERE plc.project_id = ?
+            ORDER BY plc.sort_order, c.id, l.id
             """,
             (project_id,),
         ).fetchall()
@@ -584,13 +884,17 @@ def list_label_counts(project_id: int) -> dict[str, list[dict]]:
                 l.name AS label_name,
                 COUNT(DISTINCT image_labels.rel_path) AS count
             FROM image_labels
+            JOIN project_label_categories plc
+                ON image_labels.project_id = plc.project_id
+                AND image_labels.category_id = plc.category_id
             JOIN label_categories c
                 ON image_labels.category_id = c.id
             JOIN label_options l
                 ON image_labels.label_option_id = l.id
+                AND image_labels.category_id = l.category_id
             WHERE image_labels.project_id = ?
             GROUP BY c.id, l.id
-            ORDER BY c.sort_order, c.id, l.id
+            ORDER BY plc.sort_order, c.id, l.id
             """,
             (project_id,),
         ).fetchall()
@@ -602,11 +906,14 @@ def list_label_counts(project_id: int) -> dict[str, list[dict]]:
                 c.name AS category_name,
                 COUNT(DISTINCT image_labels.rel_path) AS count
             FROM image_labels
+            JOIN project_label_categories plc
+                ON image_labels.project_id = plc.project_id
+                AND image_labels.category_id = plc.category_id
             JOIN label_categories c
                 ON image_labels.category_id = c.id
             WHERE image_labels.project_id = ?
             GROUP BY c.id
-            ORDER BY c.sort_order, c.id
+            ORDER BY plc.sort_order, c.id
             """,
             (project_id,),
         ).fetchall()
@@ -619,11 +926,34 @@ def list_label_counts(project_id: int) -> dict[str, list[dict]]:
 
 def add_category(project_id: int, name: str) -> list[dict]:
     now = utc_now()
+    display_name = name.strip()
+    normalized = normalize_schema_name(display_name)
+    if not normalized:
+        raise ValueError("Category name required")
     with get_conn() as conn:
+        category = conn.execute(
+            """
+            SELECT id FROM label_categories
+            WHERE normalized_name = ?
+            """,
+            (normalized,),
+        ).fetchone()
+        if category:
+            category_id = category["id"]
+        else:
+            cur = conn.execute(
+                """
+                INSERT INTO label_categories (name, normalized_name, created_at)
+                VALUES (?, ?, ?)
+                """,
+                (display_name, normalized, now),
+            )
+            category_id = cur.lastrowid
+
         next_order = conn.execute(
             """
             SELECT COALESCE(MAX(sort_order), -1) AS max_order
-            FROM label_categories
+            FROM project_label_categories
             WHERE project_id = ?
             """,
             (project_id,),
@@ -631,23 +961,37 @@ def add_category(project_id: int, name: str) -> list[dict]:
         sort_order = int(next_order) + 1
         conn.execute(
             """
-            INSERT OR IGNORE INTO label_categories (project_id, name, sort_order, created_at)
+            INSERT OR IGNORE INTO project_label_categories
+            (project_id, category_id, sort_order, created_at)
             VALUES (?, ?, ?, ?)
             """,
-            (project_id, name, sort_order, now),
+            (project_id, category_id, sort_order, now),
         )
     return list_label_schema(project_id)
 
 
 def update_category(project_id: int, category_id: int, name: str) -> list[dict]:
+    display_name = name.strip()
+    normalized = normalize_schema_name(display_name)
+    if not normalized:
+        raise ValueError("Category name required")
     with get_conn() as conn:
+        link = conn.execute(
+            """
+            SELECT 1 FROM project_label_categories
+            WHERE project_id = ? AND category_id = ?
+            """,
+            (project_id, category_id),
+        ).fetchone()
+        if not link:
+            raise ValueError("Category not found")
         cur = conn.execute(
             """
             UPDATE label_categories
-            SET name = ?
-            WHERE id = ? AND project_id = ?
+            SET name = ?, normalized_name = ?
+            WHERE id = ?
             """,
-            (name, category_id, project_id),
+            (display_name, normalized, category_id),
         )
         if cur.rowcount == 0:
             raise ValueError("Category not found")
@@ -658,15 +1002,15 @@ def update_category_order(project_id: int, order: list[int]) -> list[dict]:
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT id, sort_order
-            FROM label_categories
+            SELECT category_id, sort_order
+            FROM project_label_categories
             WHERE project_id = ?
-            ORDER BY sort_order, id
+            ORDER BY sort_order, category_id
             """,
             (project_id,),
         ).fetchall()
 
-        existing_ids = [row["id"] for row in rows]
+        existing_ids = [row["category_id"] for row in rows]
         existing_set = set(existing_ids)
 
         ordered_ids = [category_id for category_id in order if category_id in existing_set]
@@ -676,9 +1020,9 @@ def update_category_order(project_id: int, order: list[int]) -> list[dict]:
         for index, category_id in enumerate(final_order):
             conn.execute(
                 """
-                UPDATE label_categories
+                UPDATE project_label_categories
                 SET sort_order = ?
-                WHERE id = ? AND project_id = ?
+                WHERE category_id = ? AND project_id = ?
                 """,
                 (index, category_id, project_id),
             )
@@ -686,15 +1030,26 @@ def update_category_order(project_id: int, order: list[int]) -> list[dict]:
     return list_label_schema(project_id)
 
 
-def delete_category(project_id: int, category_id: int) -> list[dict]:
+def delete_category(project_id: int, category_id: int, scope: str = "project") -> list[dict]:
     with get_conn() as conn:
-        cur = conn.execute(
-            """
-            DELETE FROM label_categories
-            WHERE id = ? AND project_id = ?
-            """,
-            (category_id, project_id),
-        )
+        if scope == "all":
+            cur = conn.execute(
+                """
+                DELETE FROM project_label_categories
+                WHERE category_id = ?
+                """,
+                (category_id,),
+            )
+        elif scope == "project":
+            cur = conn.execute(
+                """
+                DELETE FROM project_label_categories
+                WHERE category_id = ? AND project_id = ?
+                """,
+                (category_id, project_id),
+            )
+        else:
+            raise ValueError("Invalid category delete scope")
         if cur.rowcount == 0:
             raise ValueError("Category not found")
     return list_label_schema(project_id)
@@ -702,11 +1057,15 @@ def delete_category(project_id: int, category_id: int) -> list[dict]:
 
 def add_label_option(project_id: int, category_id: int, name: str) -> list[dict]:
     now = utc_now()
+    display_name = name.strip()
+    normalized = normalize_schema_name(display_name)
+    if not normalized:
+        raise ValueError("Label name required")
     with get_conn() as conn:
         category = conn.execute(
             """
-            SELECT id FROM label_categories
-            WHERE id = ? AND project_id = ?
+            SELECT category_id FROM project_label_categories
+            WHERE category_id = ? AND project_id = ?
             """,
             (category_id, project_id),
         ).fetchone()
@@ -714,23 +1073,40 @@ def add_label_option(project_id: int, category_id: int, name: str) -> list[dict]
             raise ValueError("Category not found")
         conn.execute(
             """
-            INSERT OR IGNORE INTO label_options (project_id, category_id, name, created_at)
+            INSERT OR IGNORE INTO label_options
+            (category_id, name, normalized_name, created_at)
             VALUES (?, ?, ?, ?)
             """,
-            (project_id, category_id, name, now),
+            (category_id, display_name, normalized, now),
         )
     return list_label_schema(project_id)
 
 
 def update_label_option(project_id: int, label_id: int, name: str) -> list[dict]:
+    display_name = name.strip()
+    normalized = normalize_schema_name(display_name)
+    if not normalized:
+        raise ValueError("Label name required")
     with get_conn() as conn:
+        link = conn.execute(
+            """
+            SELECT 1
+            FROM label_options l
+            JOIN project_label_categories plc
+                ON l.category_id = plc.category_id
+            WHERE l.id = ? AND plc.project_id = ?
+            """,
+            (label_id, project_id),
+        ).fetchone()
+        if not link:
+            raise ValueError("Label not found")
         cur = conn.execute(
             """
             UPDATE label_options
-            SET name = ?
-            WHERE id = ? AND project_id = ?
+            SET name = ?, normalized_name = ?
+            WHERE id = ?
             """,
-            (name, label_id, project_id),
+            (display_name, normalized, label_id),
         )
         if cur.rowcount == 0:
             raise ValueError("Label not found")
@@ -738,17 +1114,9 @@ def update_label_option(project_id: int, label_id: int, name: str) -> list[dict]
 
 
 def delete_label_option(project_id: int, label_id: int) -> list[dict]:
-    with get_conn() as conn:
-        cur = conn.execute(
-            """
-            DELETE FROM label_options
-            WHERE id = ? AND project_id = ?
-            """,
-            (label_id, project_id),
-        )
-        if cur.rowcount == 0:
-            raise ValueError("Label not found")
-    return list_label_schema(project_id)
+    raise ValueError(
+        "Labels are shared category definitions and cannot be deleted. Add labels instead."
+    )
 
 
 def set_image_label(
@@ -762,8 +1130,8 @@ def set_image_label(
     with get_conn() as conn:
         category = conn.execute(
             """
-            SELECT id FROM label_categories
-            WHERE id = ? AND project_id = ?
+            SELECT category_id FROM project_label_categories
+            WHERE category_id = ? AND project_id = ?
             """,
             (category_id, project_id),
         ).fetchone()
@@ -783,9 +1151,9 @@ def set_image_label(
         option = conn.execute(
             """
             SELECT id FROM label_options
-            WHERE id = ? AND project_id = ? AND category_id = ?
+            WHERE id = ? AND category_id = ?
             """,
-            (label_option_id, project_id, category_id),
+            (label_option_id, category_id),
         ).fetchone()
         if not option:
             raise ValueError("Label option not found")
