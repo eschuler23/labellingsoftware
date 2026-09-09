@@ -1094,6 +1094,7 @@ const App: React.FC = () => {
     null
   );
   const [activePage, setActivePage] = useState<AppPage>("labeling");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mappingFineCategoryId, setMappingFineCategoryId] = useState<
     number | null
   >(null);
@@ -3308,352 +3309,6 @@ const App: React.FC = () => {
             Multi-category labeling with SQLite + uploads
           </div>
         </div>
-        <nav className="page-tabs" aria-label="Primary views">
-          <button
-            className={`page-tab${activePage === "labeling" ? " active" : ""}`}
-            onClick={() => setActivePage("labeling")}
-            type="button"
-          >
-            Labeling
-          </button>
-          <button
-            className={`page-tab${activePage === "mapping" ? " active" : ""}`}
-            onClick={() => setActivePage("mapping")}
-            type="button"
-          >
-            Mapping Validation
-          </button>
-        </nav>
-        <form
-          className="filename-search"
-          onSubmit={handleFilenameSearch}
-          role="search"
-        >
-          <input
-            value={filenameSearch}
-            onChange={(event) => {
-              setFilenameSearch(event.target.value);
-              setFilenameSearchOpen(false);
-              setFilenameSearchMessage(null);
-            }}
-            onFocus={() => {
-              if (filenameSearchResults.length || filenameSearchMessage) {
-                setFilenameSearchOpen(true);
-              }
-            }}
-            placeholder="Search filename"
-            aria-label="Search filename across all projects"
-            disabled={!projects.length || filenameSearchLoading}
-          />
-          {filenameSearch ? (
-            <button
-              className="filename-search-clear"
-              onClick={clearFilenameSearch}
-              type="button"
-              aria-label="Clear filename search"
-            >
-              x
-            </button>
-          ) : null}
-          <button
-            className="btn ghost small"
-            disabled={!projects.length || filenameSearchLoading}
-            type="submit"
-          >
-            {filenameSearchLoading ? "Searching..." : "Search"}
-          </button>
-
-          {filenameSearchOpen ? (
-            <div className="filename-search-results">
-              <div className="filename-search-results-header">
-                <span>{filenameSearchMessage || "Search results"}</span>
-                <button
-                  className="filter-close"
-                  onClick={() => setFilenameSearchOpen(false)}
-                  type="button"
-                  aria-label="Close filename search results"
-                >
-                  x
-                </button>
-              </div>
-              {filenameSearchResults.length ? (
-                <div className="filename-search-list">
-                  {filenameSearchResults.map((result) => (
-                    <button
-                      key={`${result.project_id}-${result.rel_path}`}
-                      className="filename-search-result"
-                      onClick={() => openFilenameSearchResult(result)}
-                      type="button"
-                    >
-                      <span className="filename-search-name">
-                        {result.filename}
-                      </span>
-                      <span className="filename-search-path">
-                        {result.project_name} / {result.rel_path}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-        </form>
-        <div className="actions">
-          <div className="actions-group actions-left">
-            <label className="btn primary file-button">
-              {uploading ? "Uploading..." : "Upload Folder"}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept={SUPPORTED_EXTENSIONS.join(",")}
-                multiple
-                onChange={handleFilesChange}
-                disabled={uploading}
-              />
-            </label>
-            <label className="btn primary file-button">
-              Upload CSV
-              <input
-                ref={csvInputRef}
-                type="file"
-                accept=".csv,text/csv"
-                onChange={handleCsvFileChange}
-                disabled={selectedProjectId === null || csvImporting}
-              />
-            </label>
-          </div>
-
-          {activePage === "labeling" ? (
-          <div className="actions-group actions-center">
-            <div className="filter-toggle">
-              <button
-                className={`btn ghost filter-trigger${
-                  filterEnabled ? " active" : ""
-                }`}
-                onClick={() => setFilterOpen((prev) => !prev)}
-                type="button"
-                aria-pressed={filterEnabled}
-                aria-expanded={filterOpen}
-              >
-                <span
-                  className={`filter-dot${filterEnabled ? " active" : ""}`}
-                  aria-hidden="true"
-                />
-                <span>Filter</span>
-              </button>
-              {filterOpen && (
-                <div className="filter-dropdown">
-                  <div className="filter-dropdown-header">
-                    <div className="filter-dropdown-title">Filters</div>
-                    <button
-                      className="filter-close"
-                      onClick={() => setFilterOpen(false)}
-                      type="button"
-                      aria-label="Close filters"
-                    >
-                      x
-                    </button>
-                  </div>
-                  <div className="filter-switch-row">
-                    <span className="filter-active-label">Filter active</span>
-                    <button
-                      className={`filter-switch${
-                        filterEnabled ? " active" : ""
-                      }`}
-                      onClick={() => setFilterEnabled((prev) => !prev)}
-                      type="button"
-                      role="switch"
-                      aria-checked={filterEnabled}
-                      aria-label="Filter active"
-                    >
-                      <span className="filter-switch-thumb" aria-hidden="true" />
-                    </button>
-                  </div>
-                  <div className="filter-switch-row">
-                    <span className="filter-active-label">
-                      Use export selection
-                    </span>
-                    <button
-                      className={`filter-switch${
-                        filterUseExportSelection ? " active" : ""
-                      }`}
-                      onClick={() =>
-                        handleFilterUseExportSelection(!filterUseExportSelection)
-                      }
-                      type="button"
-                      role="switch"
-                      aria-checked={filterUseExportSelection}
-                      aria-label="Use export selection"
-                    >
-                      <span className="filter-switch-thumb" aria-hidden="true" />
-                    </button>
-                  </div>
-                  {filterUseExportSelection ? (
-                    <div className="filter-note subtle">
-                      Export selection drives the filter.
-                    </div>
-                  ) : null}
-                  <div className="filter-mode">
-                    <button
-                      className={`btn small filter-mode-tooltip ${
-                        filterMode === "any" ? "primary" : "ghost"
-                      }`}
-                      onClick={() => setFilterMode("any")}
-                      type="button"
-                      data-tooltip="Any: show images that match at least one selected label."
-                      aria-label="Any: show images that match at least one selected label."
-                    >
-                      Any
-                    </button>
-                    <button
-                      className={`btn small filter-mode-tooltip ${
-                        filterMode === "all" ? "primary" : "ghost"
-                      }`}
-                      onClick={() => setFilterMode("all")}
-                      type="button"
-                      data-tooltip="All: show images that match each selected category (at least one selected label per category)."
-                      aria-label="All: show images that match each selected category (at least one selected label per category)."
-                    >
-                      All
-                    </button>
-                    <button
-                      className="btn ghost small"
-                      onClick={clearFilterLabels}
-                      disabled={filterUseExportSelection}
-                      type="button"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                  {categories.map((category) => (
-                    <div key={category.id} className="filter-category">
-                      <div className="filter-category-name">{category.name}</div>
-                      <div className="filter-labels">
-                        {category.labels.map((label) => (
-                          <label key={label.id} className="checkbox">
-                            <input
-                              type="checkbox"
-                              checked={filterLabelKeys.has(
-                                buildLabelKey(category.name, label.name)
-                              )}
-                              onChange={(event) =>
-                                toggleFilterLabel(
-                                  buildLabelKey(category.name, label.name),
-                                  event.target.checked
-                                )
-                              }
-                              disabled={filterUseExportSelection}
-                            />
-                            <span>
-                              {label.name} ({labelCounts.get(label.id) || 0})
-                            </span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="unlabeled-toggle">
-              <button
-                className={`btn ghost toggle unlabeled-trigger${
-                  unlabeledCategoryIds.size ? " active" : ""
-                }`}
-                onClick={() => setUnlabeledOpen((prev) => !prev)}
-                type="button"
-                aria-expanded={unlabeledOpen}
-                aria-label="Unlabeled"
-              >
-                <span
-                  className={`unlabeled-dot${
-                    unlabeledCategoryIds.size ? " active" : ""
-                  }`}
-                  aria-hidden="true"
-                />
-                <span>Unlabeled</span>
-                {unlabeledCategoryIds.size ? (
-                  <span className="unlabeled-count">
-                    ({unlabeledCategoryIds.size})
-                  </span>
-                ) : null}
-              </button>
-              {unlabeledOpen && (
-                <div className="filter-dropdown unlabeled-dropdown">
-                  <div className="filter-dropdown-header">
-                    <div className="filter-dropdown-title">
-                      Unlabeled Categories
-                    </div>
-                    <button
-                      className="filter-close"
-                      onClick={() => setUnlabeledOpen(false)}
-                      type="button"
-                      aria-label="Close unlabeled categories"
-                    >
-                      x
-                    </button>
-                  </div>
-                  <div className="filter-note subtle">
-                    Show images that are missing labels in selected categories.
-                  </div>
-                  <div className="unlabeled-actions">
-                    <button
-                      className="btn ghost small"
-                      onClick={clearUnlabeledCategories}
-                      disabled={!unlabeledCategoryIds.size}
-                      type="button"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                  {categories.length ? (
-                    <div className="unlabeled-categories">
-                      {categories.map((category) => (
-                        <label key={category.id} className="checkbox">
-                          <input
-                            type="checkbox"
-                            checked={unlabeledCategoryIds.has(category.id)}
-                            onChange={(event) =>
-                              toggleUnlabeledCategory(
-                                category.id,
-                                event.target.checked
-                              )
-                            }
-                          />
-                          <span>
-                            {category.name} (
-                            {unlabeledCategoryCounts.get(category.id) || 0})
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="subtle">
-                      Add categories first to use unlabeled-by-category
-                      filtering.
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-          ) : null}
-
-          {activePage === "labeling" ? (
-          <div className="actions-group actions-right">
-            <button
-              className="btn ghost"
-              onClick={handleExport}
-              disabled={!exportProjectIds.size || exporting}
-              type="button"
-            >
-              {exporting
-                ? "Preparing preview..."
-                : `Preview CSV${exportProjectIds.size > 1 ? " (" + exportProjectIds.size + ")" : ""}`}
-            </button>
-          </div>
-          ) : null}
-        </div>
       </header>
 
       {csvImportOpen ? (
@@ -3949,55 +3604,1049 @@ const App: React.FC = () => {
         </div>
       ) : null}
 
-      <div className="content">
-        <aside className="card sidebar">
-          <div className="sidebar-header">
-            <div>
-              <div className="section-title">Projects</div>
-              <div className="subtle">
-                Upload multiple folders to create projects.
-              </div>
-            </div>
-            <div className="stat">{projects.length}</div>
-          </div>
+      <div className={`content${sidebarCollapsed ? " sidebar-collapsed" : ""}`}>
+        <aside className={`card sidebar${sidebarCollapsed ? " collapsed" : ""}`}>
+          <button
+            className="sidebar-collapse"
+            onClick={() => setSidebarCollapsed((prev) => !prev)}
+            type="button"
+            aria-expanded={!sidebarCollapsed}
+            aria-label={sidebarCollapsed ? "Expand controls" : "Collapse controls"}
+            title={sidebarCollapsed ? "Expand controls" : "Collapse controls"}
+          >
+            {sidebarCollapsed ? "☰" : "‹"}
+          </button>
 
-          <div className="progress">
-            <div className="progress-row">
-              <span>
-                {images.length
-                  ? `Image ${currentIndex + 1} of ${images.length}`
-                  : "No images"}
-              </span>
-              <span>{labeledCount} labeled</span>
-            </div>
-            <div className="progress-track">
-              <div
-                className="progress-fill"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
-            {hasActiveFilter ? (
-              <div className="filter-status">
-                Showing {filteredIndexes.length} of {images.length} images
-              </div>
-            ) : null}
-          </div>
-
-          <div className="list">
-            {projects.length ? (
-              sidebarProjects
-            ) : (
-              <div className="empty-list">
-                <div className="empty-icon">+</div>
-                <div className="empty-title">Upload a folder to start</div>
-                <div className="subtle">
-                  Each folder becomes a separate project.
+          {!sidebarCollapsed ? (
+            <>
+              <div className="sidebar-header">
+                <div>
+                  <div className="section-title">Controls</div>
+                  <div className="subtle">
+                    Navigation, imports, filters, projects, and schema.
+                  </div>
                 </div>
+                <div className="stat">{projects.length}</div>
               </div>
-            )}
-          </div>
 
-          {error ? <div className="error-banner">{error}</div> : null}
+              <details className="sidebar-section" open>
+                <summary>Navigation</summary>
+                <nav className="page-tabs sidebar-tabs" aria-label="Primary views">
+                  <button
+                    className={`page-tab${activePage === "labeling" ? " active" : ""}`}
+                    onClick={() => setActivePage("labeling")}
+                    type="button"
+                  >
+                    Labeling
+                  </button>
+                  <button
+                    className={`page-tab${activePage === "mapping" ? " active" : ""}`}
+                    onClick={() => setActivePage("mapping")}
+                    type="button"
+                  >
+                    Mapping Validation
+                  </button>
+                </nav>
+              </details>
+
+              <details className="sidebar-section" open>
+                <summary>Imports & Search</summary>
+                <div className="sidebar-actions">
+                  <label className="btn primary file-button">
+                    {uploading ? "Uploading..." : "Upload Folder"}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={SUPPORTED_EXTENSIONS.join(",")}
+                      multiple
+                      onChange={handleFilesChange}
+                      disabled={uploading}
+                    />
+                  </label>
+                  <label className="btn primary file-button">
+                    Upload CSV
+                    <input
+                      ref={csvInputRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={handleCsvFileChange}
+                      disabled={selectedProjectId === null || csvImporting}
+                    />
+                  </label>
+                </div>
+                <form
+                  className="filename-search sidebar-search"
+                  onSubmit={handleFilenameSearch}
+                  role="search"
+                >
+                  <input
+                    value={filenameSearch}
+                    onChange={(event) => {
+                      setFilenameSearch(event.target.value);
+                      setFilenameSearchOpen(false);
+                      setFilenameSearchMessage(null);
+                    }}
+                    onFocus={() => {
+                      if (filenameSearchResults.length || filenameSearchMessage) {
+                        setFilenameSearchOpen(true);
+                      }
+                    }}
+                    placeholder="Search filename"
+                    aria-label="Search filename across all projects"
+                    disabled={!projects.length || filenameSearchLoading}
+                  />
+                  {filenameSearch ? (
+                    <button
+                      className="filename-search-clear"
+                      onClick={clearFilenameSearch}
+                      type="button"
+                      aria-label="Clear filename search"
+                    >
+                      x
+                    </button>
+                  ) : null}
+                  <button
+                    className="btn ghost small"
+                    disabled={!projects.length || filenameSearchLoading}
+                    type="submit"
+                  >
+                    {filenameSearchLoading ? "Searching..." : "Search"}
+                  </button>
+
+                  {filenameSearchOpen ? (
+                    <div className="filename-search-results">
+                      <div className="filename-search-results-header">
+                        <span>{filenameSearchMessage || "Search results"}</span>
+                        <button
+                          className="filter-close"
+                          onClick={() => setFilenameSearchOpen(false)}
+                          type="button"
+                          aria-label="Close filename search results"
+                        >
+                          x
+                        </button>
+                      </div>
+                      {filenameSearchResults.length ? (
+                        <div className="filename-search-list">
+                          {filenameSearchResults.map((result) => (
+                            <button
+                              key={`${result.project_id}-${result.rel_path}`}
+                              className="filename-search-result"
+                              onClick={() => openFilenameSearchResult(result)}
+                              type="button"
+                            >
+                              <span className="filename-search-name">
+                                {result.filename}
+                              </span>
+                              <span className="filename-search-path">
+                                {result.project_name} / {result.rel_path}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </form>
+              </details>
+
+              <details className="sidebar-section" open>
+                <summary>Projects</summary>
+                <div className="progress">
+                  <div className="progress-row">
+                    <span>
+                      {images.length
+                        ? `Image ${currentIndex + 1} of ${images.length}`
+                        : "No images"}
+                    </span>
+                    <span>{labeledCount} labeled</span>
+                  </div>
+                  <div className="progress-track">
+                    <div
+                      className="progress-fill"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                  {hasActiveFilter ? (
+                    <div className="filter-status">
+                      Showing {filteredIndexes.length} of {images.length} images
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="list">
+                  {projects.length ? (
+                    sidebarProjects
+                  ) : (
+                    <div className="empty-list">
+                      <div className="empty-icon">+</div>
+                      <div className="empty-title">Upload a folder to start</div>
+                      <div className="subtle">
+                        Each folder becomes a separate project.
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </details>
+
+              {activePage === "labeling" ? (
+                <>
+                  <details className="sidebar-section" open>
+                    <summary>Filters</summary>
+                    <div className="filter-sidebar-stack">
+                      <div className="filter-toggle">
+                        <button
+                          className={`btn ghost filter-trigger${
+                            filterEnabled ? " active" : ""
+                          }`}
+                          onClick={() => setFilterOpen((prev) => !prev)}
+                          type="button"
+                          aria-pressed={filterEnabled}
+                          aria-expanded={filterOpen}
+                        >
+                          <span
+                            className={`filter-dot${filterEnabled ? " active" : ""}`}
+                            aria-hidden="true"
+                          />
+                          <span>Label Filter</span>
+                        </button>
+                        {filterOpen && (
+                          <div className="filter-dropdown sidebar-dropdown">
+                            <div className="filter-dropdown-header">
+                              <div className="filter-dropdown-title">Filters</div>
+                              <button
+                                className="filter-close"
+                                onClick={() => setFilterOpen(false)}
+                                type="button"
+                                aria-label="Close filters"
+                              >
+                                x
+                              </button>
+                            </div>
+                            <div className="filter-switch-row">
+                              <span className="filter-active-label">Filter active</span>
+                              <button
+                                className={`filter-switch${filterEnabled ? " active" : ""}`}
+                                onClick={() => setFilterEnabled((prev) => !prev)}
+                                type="button"
+                                role="switch"
+                                aria-checked={filterEnabled}
+                                aria-label="Filter active"
+                              >
+                                <span className="filter-switch-thumb" aria-hidden="true" />
+                              </button>
+                            </div>
+                            <div className="filter-switch-row">
+                              <span className="filter-active-label">
+                                Use export selection
+                              </span>
+                              <button
+                                className={`filter-switch${
+                                  filterUseExportSelection ? " active" : ""
+                                }`}
+                                onClick={() =>
+                                  handleFilterUseExportSelection(!filterUseExportSelection)
+                                }
+                                type="button"
+                                role="switch"
+                                aria-checked={filterUseExportSelection}
+                                aria-label="Use export selection"
+                              >
+                                <span className="filter-switch-thumb" aria-hidden="true" />
+                              </button>
+                            </div>
+                            {filterUseExportSelection ? (
+                              <div className="filter-note subtle">
+                                Export selection drives the filter.
+                              </div>
+                            ) : null}
+                            <div className="filter-mode">
+                              <button
+                                className={`btn small filter-mode-tooltip ${
+                                  filterMode === "any" ? "primary" : "ghost"
+                                }`}
+                                onClick={() => setFilterMode("any")}
+                                type="button"
+                                data-tooltip="Any: show images that match at least one selected label."
+                                aria-label="Any: show images that match at least one selected label."
+                              >
+                                Any
+                              </button>
+                              <button
+                                className={`btn small filter-mode-tooltip ${
+                                  filterMode === "all" ? "primary" : "ghost"
+                                }`}
+                                onClick={() => setFilterMode("all")}
+                                type="button"
+                                data-tooltip="All: show images that match each selected category (at least one selected label per category)."
+                                aria-label="All: show images that match each selected category (at least one selected label per category)."
+                              >
+                                All
+                              </button>
+                              <button
+                                className="btn ghost small"
+                                onClick={clearFilterLabels}
+                                disabled={filterUseExportSelection}
+                                type="button"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                            {categories.map((category) => (
+                              <div key={category.id} className="filter-category">
+                                <div className="filter-category-name">{category.name}</div>
+                                <div className="filter-labels">
+                                  {category.labels.map((label) => (
+                                    <label key={label.id} className="checkbox">
+                                      <input
+                                        type="checkbox"
+                                        checked={filterLabelKeys.has(
+                                          buildLabelKey(category.name, label.name)
+                                        )}
+                                        onChange={(event) =>
+                                          toggleFilterLabel(
+                                            buildLabelKey(category.name, label.name),
+                                            event.target.checked
+                                          )
+                                        }
+                                        disabled={filterUseExportSelection}
+                                      />
+                                      <span>
+                                        {label.name} ({labelCounts.get(label.id) || 0})
+                                      </span>
+                                    </label>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="unlabeled-toggle">
+                        <button
+                          className={`btn ghost toggle unlabeled-trigger${
+                            unlabeledCategoryIds.size ? " active" : ""
+                          }`}
+                          onClick={() => setUnlabeledOpen((prev) => !prev)}
+                          type="button"
+                          aria-expanded={unlabeledOpen}
+                          aria-label="Unlabeled"
+                        >
+                          <span
+                            className={`unlabeled-dot${
+                              unlabeledCategoryIds.size ? " active" : ""
+                            }`}
+                            aria-hidden="true"
+                          />
+                          <span>Unlabeled</span>
+                          {unlabeledCategoryIds.size ? (
+                            <span className="unlabeled-count">
+                              ({unlabeledCategoryIds.size})
+                            </span>
+                          ) : null}
+                        </button>
+                        {unlabeledOpen && (
+                          <div className="filter-dropdown sidebar-dropdown">
+                            <div className="filter-dropdown-header">
+                              <div className="filter-dropdown-title">
+                                Unlabeled Categories
+                              </div>
+                              <button
+                                className="filter-close"
+                                onClick={() => setUnlabeledOpen(false)}
+                                type="button"
+                                aria-label="Close unlabeled categories"
+                              >
+                                x
+                              </button>
+                            </div>
+                            <div className="filter-note subtle">
+                              Show images that are missing labels in selected categories.
+                            </div>
+                            <div className="unlabeled-actions">
+                              <button
+                                className="btn ghost small"
+                                onClick={clearUnlabeledCategories}
+                                disabled={!unlabeledCategoryIds.size}
+                                type="button"
+                              >
+                                Clear
+                              </button>
+                            </div>
+                            {categories.length ? (
+                              <div className="unlabeled-categories">
+                                {categories.map((category) => (
+                                  <label key={category.id} className="checkbox">
+                                    <input
+                                      type="checkbox"
+                                      checked={unlabeledCategoryIds.has(category.id)}
+                                      onChange={(event) =>
+                                        toggleUnlabeledCategory(
+                                          category.id,
+                                          event.target.checked
+                                        )
+                                      }
+                                    />
+                                    <span>
+                                      {category.name} (
+                                      {unlabeledCategoryCounts.get(category.id) || 0})
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="subtle">
+                                Add categories first to use unlabeled-by-category filtering.
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </details>
+
+                  <details className="sidebar-section">
+                    <summary>Schema & Categories</summary>
+                    <div className="label-add sidebar-label-add">
+                      <input
+                        className="label-input"
+                        value={newCategory}
+                        onChange={(event) => setNewCategory(event.target.value)}
+                        placeholder="Add a new category"
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            openCategorySyncModal();
+                          }
+                        }}
+                      />
+                      <button
+                        className="btn"
+                        onClick={openCategorySyncModal}
+                        disabled={!newCategory.trim()}
+                        type="button"
+                      >
+                        Add Category
+                      </button>
+                    </div>
+
+                    <div className="label-manage sidebar-manage">
+                      <div className="section-header">
+                        <div className="section-title-row">
+                          <div className="section-title">
+                            Manage Categories & Labels
+                          </div>
+                          <button
+                            className={`collapse-icon${
+                              manageCollapsed ? " collapsed" : ""
+                            }`}
+                            onClick={() => setManageCollapsed((prev) => !prev)}
+                            type="button"
+                            aria-expanded={!manageCollapsed}
+                            aria-label={
+                              manageCollapsed
+                                ? "Expand manage categories"
+                                : "Collapse manage categories"
+                            }
+                            title={
+                              manageCollapsed
+                                ? "Expand manage categories"
+                                : "Collapse manage categories"
+                            }
+                          >
+                            ⌄
+                          </button>
+                        </div>
+                        <div className="label-actions">
+                          <button
+                            className="btn ghost small"
+                            onClick={handleOpenSchemaExplorer}
+                            disabled={selectedProjectId === null}
+                            type="button"
+                          >
+                            Explore Schemas
+                          </button>
+                        </div>
+                      </div>
+                      {schemaExplorerOpen ? (
+                        <div className="schema-explorer">
+                          <div className="schema-explorer-header">
+                            <div className="schema-explorer-title">
+                              Explore Existing Schemas
+                            </div>
+                            <div className="label-actions">
+                              <button
+                                className="btn ghost small"
+                                onClick={() => void loadSchemaExplorer()}
+                                disabled={schemaExplorerLoading}
+                                type="button"
+                              >
+                                Refresh
+                              </button>
+                              <button
+                                className="btn ghost small"
+                                onClick={() => setSchemaExplorerOpen(false)}
+                                type="button"
+                              >
+                                Close
+                              </button>
+                            </div>
+                          </div>
+                          <div className="subtle">
+                            Green means items will be added. Existing categories and
+                            labels are kept.
+                          </div>
+                          {schemaExplorerLoading ? (
+                            <div className="subtle">Loading schemas...</div>
+                          ) : schemaExplorerError ? (
+                            <div className="error-banner">{schemaExplorerError}</div>
+                          ) : schemaExplorerGroups.length ? (
+                            <div className="schema-group-list">
+                              {schemaExplorerGroups.map((group) => {
+                                const diff = schemaDiffBySignature.get(group.signature);
+                                return (
+                                  <div key={group.signature} className="schema-group-card">
+                                    <div className="schema-group-header">
+                                      <div>
+                                        <div className="schema-group-projects">
+                                          {group.projectNames.join(", ")}
+                                        </div>
+                                        <div className="subtle">
+                                          {group.projectNames.length > 1
+                                            ? `${group.projectNames.length} projects share this schema`
+                                            : "1 project has this schema"}
+                                        </div>
+                                        {diff ? (
+                                          <div className="schema-group-badges">
+                                            {!diff.hasChanges ? (
+                                              <span className="schema-badge neutral">
+                                                No changes
+                                              </span>
+                                            ) : (
+                                              <>
+                                                {diff.addedCategories > 0 ? (
+                                                  <span className="schema-badge added">
+                                                    +{diff.addedCategories} categories
+                                                  </span>
+                                                ) : null}
+                                                {diff.addedLabels > 0 ? (
+                                                  <span className="schema-badge added">
+                                                    +{diff.addedLabels} labels
+                                                  </span>
+                                                ) : null}
+                                                {diff.removedCategories > 0 ? (
+                                                  <span className="schema-badge removed">
+                                                    keeps {diff.removedCategories} extra categories
+                                                  </span>
+                                                ) : null}
+                                                {diff.removedLabels > 0 ? (
+                                                  <span className="schema-badge removed">
+                                                    keeps {diff.removedLabels} extra labels
+                                                  </span>
+                                                ) : null}
+                                              </>
+                                            )}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                      <button
+                                        className="btn small"
+                                        onClick={() => void handleApplySchemaGroup(group)}
+                                        disabled={
+                                          schemaApplyingSignature === group.signature ||
+                                          (diff ? !diff.hasChanges : false)
+                                        }
+                                        type="button"
+                                      >
+                                        {schemaApplyingSignature === group.signature
+                                          ? "Applying..."
+                                          : diff && !diff.hasChanges
+                                            ? "Up to date"
+                                            : "Use Schema"}
+                                      </button>
+                                    </div>
+                                    <div className="schema-group-categories">
+                                      {(diff?.categories || []).map((categoryDiff) => {
+                                        const status = categoryDiff.status;
+                                        const categoryLabelTone =
+                                          status === "added"
+                                            ? "added"
+                                            : "same";
+                                        const displayStatus =
+                                          status === "removed" ? "same" : status;
+                                        return (
+                                          <div
+                                            key={`${group.signature}-${categoryDiff.name}-${status}`}
+                                            className={`schema-group-category ${displayStatus}`}
+                                          >
+                                            <div className="schema-group-category-head">
+                                              <div className={`schema-group-category-name ${displayStatus}`}>
+                                                {categoryDiff.name}
+                                              </div>
+                                              <span className={`schema-mini-badge ${displayStatus}`}>
+                                                {status === "added"
+                                                  ? "New"
+                                                  : status === "removed"
+                                                    ? "Kept"
+                                                  : status === "changed"
+                                                    ? "Changed"
+                                                    : "Same"}
+                                              </span>
+                                            </div>
+                                            {status === "changed" ? (
+                                              <div className="schema-diff-lines">
+                                                {categoryDiff.addedLabels.length > 0 ? (
+                                                  <div className="schema-diff-line added">
+                                                    <span className="schema-diff-prefix">
+                                                      Adds:
+                                                    </span>
+                                                    <div className="schema-label-list">
+                                                      {categoryDiff.addedLabels.map((label) => (
+                                                        <span
+                                                          key={`${group.signature}-${categoryDiff.name}-add-${label}`}
+                                                          className="schema-label-chip added"
+                                                        >
+                                                          {label}
+                                                        </span>
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                ) : null}
+                                                {categoryDiff.removedLabels.length > 0 ? (
+                                                  <div className="schema-diff-line same">
+                                                    <span className="schema-diff-prefix">
+                                                      Keeps:
+                                                    </span>
+                                                    <div className="schema-label-list">
+                                                      {categoryDiff.removedLabels.map((label) => (
+                                                        <span
+                                                          key={`${group.signature}-${categoryDiff.name}-remove-${label}`}
+                                                          className="schema-label-chip same"
+                                                        >
+                                                          {label}
+                                                        </span>
+                                                      ))}
+                                                    </div>
+                                                  </div>
+                                                ) : null}
+                                                {!categoryDiff.addedLabels.length &&
+                                                !categoryDiff.removedLabels.length ? (
+                                                  <div className="subtle">No label changes</div>
+                                                ) : null}
+                                              </div>
+                                            ) : (
+                                              <div
+                                                className={
+                                                  status === "added"
+                                                    ? "schema-diff-line added"
+                                                    : "schema-diff-line same"
+                                                }
+                                              >
+                                                <div className="schema-label-list">
+                                                  {categoryDiff.labels.length ? (
+                                                    categoryDiff.labels.map((label) => (
+                                                      <span
+                                                        key={`${group.signature}-${categoryDiff.name}-${status}-${label}`}
+                                                        className={`schema-label-chip ${categoryLabelTone}`}
+                                                      >
+                                                        {label}
+                                                      </span>
+                                                    ))
+                                                  ) : (
+                                                    <span className="schema-label-chip empty">
+                                                      No labels
+                                                    </span>
+                                                  )}
+                                                </div>
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <div className="subtle">
+                              No reusable schemas found in other projects.
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                      {!manageCollapsed
+                        ? categories.map((category) => (
+                            <div
+                              key={category.id}
+                              className={`manage-category${
+                                draggingCategoryId === category.id ? " dragging" : ""
+                              }${
+                                dragOverCategoryId === category.id ? " drag-over" : ""
+                              }`}
+                              onDragOver={handleCategoryDragOver}
+                              onDragEnter={() =>
+                                handleCategoryDragEnter(category.id)
+                              }
+                              onDrop={(event) =>
+                                handleCategoryDrop(event, category.id)
+                              }
+                            >
+                              <div
+                                className="manage-category-header"
+                                draggable
+                                onDragStart={(event) =>
+                                  handleCategoryDragStart(event, category.id)
+                                }
+                                onDragEnd={handleCategoryDragEnd}
+                                title="Drag to reorder categories"
+                              >
+                                {editingCategoryId === category.id ? (
+                                  <input
+                                    className="label-inline-input"
+                                    value={editingCategoryName}
+                                    onChange={(event) =>
+                                      setEditingCategoryName(event.target.value)
+                                    }
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        handleRenameCategory();
+                                      }
+                                      if (event.key === "Escape") {
+                                        setEditingCategoryId(null);
+                                        setEditingCategoryName("");
+                                      }
+                                    }}
+                                  />
+                                ) : (
+                                  <span className="label-name">{category.name}</span>
+                                )}
+                                <div className="label-actions">
+                                  {editingCategoryId === category.id ? (
+                                    <>
+                                      <button
+                                        className="btn small"
+                                        onClick={handleRenameCategory}
+                                        type="button"
+                                      >
+                                        Save
+                                      </button>
+                                      <button
+                                        className="btn ghost small"
+                                        onClick={() => {
+                                          setEditingCategoryId(null);
+                                          setEditingCategoryName("");
+                                        }}
+                                        type="button"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        className="btn ghost small"
+                                        onClick={() => {
+                                          setEditingCategoryId(category.id);
+                                          setEditingCategoryName(category.name);
+                                        }}
+                                        type="button"
+                                      >
+                                        Edit
+                                      </button>
+                                      <button
+                                        className="btn ghost small"
+                                        onClick={() =>
+                                          handleDeleteCategory(category)
+                                        }
+                                        type="button"
+                                      >
+                                        Remove
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="manage-label-add">
+                                <input
+                                  className="label-input"
+                                  value={newLabelByCategory[category.id] || ""}
+                                  onChange={(event) =>
+                                    setNewLabelByCategory((prev) => ({
+                                      ...prev,
+                                      [category.id]: event.target.value,
+                                    }))
+                                  }
+                                  placeholder={`Add label to ${category.name}`}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      event.preventDefault();
+                                      handleAddLabel(category.id);
+                                    }
+                                  }}
+                                />
+                                <button
+                                  className="btn"
+                                  onClick={() => handleAddLabel(category.id)}
+                                  disabled={!newLabelByCategory[category.id]?.trim()}
+                                  type="button"
+                                >
+                                  Add Label
+                                </button>
+                              </div>
+
+                              <div className="manage-label-list">
+                                {category.labels.map((label) => (
+                                  <div key={label.id} className="label-item">
+                                    {editingLabelId === label.id ? (
+                                      <input
+                                        className="label-inline-input"
+                                        value={editingLabelName}
+                                        onChange={(event) =>
+                                          setEditingLabelName(event.target.value)
+                                        }
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Enter") {
+                                            event.preventDefault();
+                                            handleRenameLabel();
+                                          }
+                                          if (event.key === "Escape") {
+                                            setEditingLabelId(null);
+                                            setEditingLabelName("");
+                                          }
+                                        }}
+                                      />
+                                    ) : (
+                                      <span className="label-name">{label.name}</span>
+                                    )}
+                                    <div className="label-actions">
+                                      {editingLabelId === label.id ? (
+                                        <>
+                                          <button
+                                            className="btn small"
+                                            onClick={handleRenameLabel}
+                                            type="button"
+                                          >
+                                            Save
+                                          </button>
+                                          <button
+                                            className="btn ghost small"
+                                            onClick={() => {
+                                              setEditingLabelId(null);
+                                              setEditingLabelName("");
+                                            }}
+                                            type="button"
+                                          >
+                                            Cancel
+                                          </button>
+                                        </>
+                                      ) : (
+                                        <button
+                                          className="btn ghost small"
+                                          onClick={() => {
+                                            setEditingLabelId(label.id);
+                                            setEditingLabelName(label.name);
+                                          }}
+                                          type="button"
+                                        >
+                                          Edit
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))
+                        : null}
+                    </div>
+                  </details>
+
+                  <details className="sidebar-section">
+                    <summary>Export</summary>
+                    <div className="export-panel sidebar-export-panel">
+                      <button
+                        className="btn ghost"
+                        onClick={handleExport}
+                        disabled={!exportProjectIds.size || exporting}
+                        type="button"
+                      >
+                        {exporting
+                          ? "Preparing preview..."
+                          : `Preview CSV${exportProjectIds.size > 1 ? " (" + exportProjectIds.size + ")" : ""}`}
+                      </button>
+                      <div className="export-projects">
+                        <div className="export-projects-header">
+                          <div className="section-title-row">
+                            <div className="section-title">Export Projects</div>
+                            <button
+                              className={`collapse-icon${
+                                exportProjectsCollapsed ? " collapsed" : ""
+                              }`}
+                              onClick={() =>
+                                setExportProjectsCollapsed((prev) => !prev)
+                              }
+                              type="button"
+                              aria-expanded={!exportProjectsCollapsed}
+                              aria-label={
+                                exportProjectsCollapsed
+                                  ? "Expand export projects"
+                                  : "Collapse export projects"
+                              }
+                              title={
+                                exportProjectsCollapsed
+                                  ? "Expand export projects"
+                                  : "Collapse export projects"
+                              }
+                            >
+                              ⌄
+                            </button>
+                          </div>
+                          <div className="label-actions">
+                            <button
+                              className="btn ghost small"
+                              onClick={selectAllExportProjects}
+                              type="button"
+                            >
+                              Select All
+                            </button>
+                            <button
+                              className="btn ghost small"
+                              onClick={useCurrentProjectForExport}
+                              type="button"
+                            >
+                              Use Current
+                            </button>
+                          </div>
+                        </div>
+                        {!exportProjectsCollapsed ? (
+                          <div className="export-project-list">
+                            {projects.map((project) => (
+                              <label
+                                key={project.id}
+                                className="checkbox export-project"
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={exportProjectIds.has(project.id)}
+                                  onChange={() => toggleExportProject(project.id)}
+                                />
+                                <span>{project.name}</span>
+                              </label>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="export-header">
+                        <div className="section-title-row">
+                          <div className="section-title">Export Selection</div>
+                          <button
+                            className={`collapse-icon${
+                              exportSelectionCollapsed ? " collapsed" : ""
+                            }`}
+                            onClick={() =>
+                              setExportSelectionCollapsed((prev) => !prev)
+                            }
+                            type="button"
+                            aria-expanded={!exportSelectionCollapsed}
+                            aria-label={
+                              exportSelectionCollapsed
+                                ? "Expand export selection"
+                                : "Collapse export selection"
+                            }
+                            title={
+                              exportSelectionCollapsed
+                                ? "Expand export selection"
+                                : "Collapse export selection"
+                            }
+                          >
+                            ⌄
+                          </button>
+                        </div>
+                        <div className="label-actions">
+                          <button
+                            className="btn ghost small"
+                            onClick={selectAllLabels}
+                            type="button"
+                          >
+                            Select All
+                          </button>
+                          <button
+                            className="btn ghost small"
+                            onClick={clearAllLabels}
+                            type="button"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                      {!exportSelectionCollapsed ? (
+                        <>
+                          <label className="checkbox export-toggle">
+                            <input
+                              type="checkbox"
+                              checked={exportOnlySelected}
+                              onChange={(event) =>
+                                setExportOnlySelected(event.target.checked)
+                              }
+                            />
+                            <span>Only export images that match selected labels</span>
+                          </label>
+                          <label className="checkbox export-toggle">
+                            <input
+                              type="checkbox"
+                              checked={filterUseExportSelection}
+                              onChange={(event) =>
+                                handleFilterUseExportSelection(event.target.checked)
+                              }
+                            />
+                            <span>Only show images that match selected labels</span>
+                          </label>
+                          {categories.map((category) => (
+                            <div key={category.id} className="export-category">
+                              <div className="export-category-name">
+                                {`${category.name} (${
+                                  exportCounts.categoryCounts.get(category.name) || 0
+                                })`}
+                              </div>
+                              <div className="export-labels">
+                                {category.labels.map((label) => (
+                                  <label key={label.id} className="checkbox">
+                                    <input
+                                      type="checkbox"
+                                      checked={exportLabelKeys.has(
+                                        buildLabelKey(category.name, label.name)
+                                      )}
+                                      onChange={() =>
+                                        toggleLabelSelection(
+                                          buildLabelKey(category.name, label.name)
+                                        )
+                                      }
+                                    />
+                                    <span>
+                                      {`${label.name} (${
+                                        exportCounts.labelCounts.get(
+                                          buildLabelKey(category.name, label.name)
+                                        ) || 0
+                                      })`}
+                                    </span>
+                                  </label>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      ) : null}
+                    </div>
+                  </details>
+                </>
+              ) : null}
+
+              {error ? <div className="error-banner">{error}</div> : null}
+            </>
+          ) : null}
         </aside>
 
         <main
@@ -4561,628 +5210,6 @@ const App: React.FC = () => {
                 })}
               </div>
 
-              <div className="label-add">
-                <input
-                  className="label-input"
-                  value={newCategory}
-                  onChange={(event) => setNewCategory(event.target.value)}
-                  placeholder="Add a new category"
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      openCategorySyncModal();
-                    }
-                  }}
-                />
-                <button
-                  className="btn"
-                  onClick={openCategorySyncModal}
-                  disabled={!newCategory.trim()}
-                  type="button"
-                >
-                  Add Category
-                </button>
-              </div>
-
-              <div className="label-manage">
-                <div className="section-header">
-                  <div className="section-title-row">
-                    <div className="section-title">
-                      Manage Categories & Labels
-                    </div>
-                    <button
-                      className={`collapse-icon${
-                        manageCollapsed ? " collapsed" : ""
-                      }`}
-                      onClick={() => setManageCollapsed((prev) => !prev)}
-                      type="button"
-                      aria-expanded={!manageCollapsed}
-                      aria-label={
-                        manageCollapsed
-                          ? "Expand manage categories"
-                          : "Collapse manage categories"
-                      }
-                      title={
-                        manageCollapsed
-                          ? "Expand manage categories"
-                          : "Collapse manage categories"
-                      }
-                    >
-                      ⌄
-                    </button>
-                  </div>
-                  <div className="label-actions">
-                    <button
-                      className="btn ghost small"
-                      onClick={handleOpenSchemaExplorer}
-                      disabled={selectedProjectId === null}
-                      type="button"
-                    >
-                      Explore Schemas
-                    </button>
-                  </div>
-                </div>
-                {schemaExplorerOpen ? (
-                  <div className="schema-explorer">
-                    <div className="schema-explorer-header">
-                      <div className="schema-explorer-title">
-                        Explore Existing Schemas
-                      </div>
-                      <div className="label-actions">
-                        <button
-                          className="btn ghost small"
-                          onClick={() => void loadSchemaExplorer()}
-                          disabled={schemaExplorerLoading}
-                          type="button"
-                        >
-                          Refresh
-                        </button>
-                        <button
-                          className="btn ghost small"
-                          onClick={() => setSchemaExplorerOpen(false)}
-                          type="button"
-                        >
-                          Close
-                        </button>
-                      </div>
-                    </div>
-                    <div className="subtle">
-                      Green means items will be added. Existing categories and
-                      labels are kept.
-                    </div>
-                    {schemaExplorerLoading ? (
-                      <div className="subtle">Loading schemas...</div>
-                    ) : schemaExplorerError ? (
-                      <div className="error-banner">{schemaExplorerError}</div>
-                    ) : schemaExplorerGroups.length ? (
-                      <div className="schema-group-list">
-                        {schemaExplorerGroups.map((group) => {
-                          const diff = schemaDiffBySignature.get(group.signature);
-                          return (
-                            <div key={group.signature} className="schema-group-card">
-                              <div className="schema-group-header">
-                                <div>
-                                  <div className="schema-group-projects">
-                                    {group.projectNames.join(", ")}
-                                  </div>
-                                  <div className="subtle">
-                                    {group.projectNames.length > 1
-                                      ? `${group.projectNames.length} projects share this schema`
-                                      : "1 project has this schema"}
-                                  </div>
-                                  {diff ? (
-                                    <div className="schema-group-badges">
-                                      {!diff.hasChanges ? (
-                                        <span className="schema-badge neutral">
-                                          No changes
-                                        </span>
-                                      ) : (
-                                        <>
-                                          {diff.addedCategories > 0 ? (
-                                            <span className="schema-badge added">
-                                              +{diff.addedCategories} categories
-                                            </span>
-                                          ) : null}
-                                          {diff.addedLabels > 0 ? (
-                                            <span className="schema-badge added">
-                                              +{diff.addedLabels} labels
-                                            </span>
-                                          ) : null}
-                                          {diff.removedCategories > 0 ? (
-                                            <span className="schema-badge removed">
-                                              keeps {diff.removedCategories} extra categories
-                                            </span>
-                                          ) : null}
-                                          {diff.removedLabels > 0 ? (
-                                            <span className="schema-badge removed">
-                                              keeps {diff.removedLabels} extra labels
-                                            </span>
-                                          ) : null}
-                                        </>
-                                      )}
-                                    </div>
-                                  ) : null}
-                                </div>
-                                <button
-                                  className="btn small"
-                                  onClick={() => void handleApplySchemaGroup(group)}
-                                  disabled={
-                                    schemaApplyingSignature === group.signature ||
-                                    (diff ? !diff.hasChanges : false)
-                                  }
-                                  type="button"
-                                >
-                                  {schemaApplyingSignature === group.signature
-                                    ? "Applying..."
-                                    : diff && !diff.hasChanges
-                                      ? "Up to date"
-                                      : "Use Schema"}
-                                </button>
-                              </div>
-                              <div className="schema-group-categories">
-                                {(diff?.categories || []).map((categoryDiff) => {
-                                  const status = categoryDiff.status;
-                                  const categoryLabelTone =
-                                    status === "added"
-                                      ? "added"
-                                      : "same";
-                                  const displayStatus =
-                                    status === "removed" ? "same" : status;
-                                  return (
-                                    <div
-                                      key={`${group.signature}-${categoryDiff.name}-${status}`}
-                                      className={`schema-group-category ${displayStatus}`}
-                                    >
-                                      <div className="schema-group-category-head">
-                                        <div className={`schema-group-category-name ${displayStatus}`}>
-                                          {categoryDiff.name}
-                                        </div>
-                                        <span className={`schema-mini-badge ${displayStatus}`}>
-                                          {status === "added"
-                                            ? "New"
-                                            : status === "removed"
-                                              ? "Kept"
-                                            : status === "changed"
-                                              ? "Changed"
-                                              : "Same"}
-                                        </span>
-                                      </div>
-                                      {status === "changed" ? (
-                                        <div className="schema-diff-lines">
-                                          {categoryDiff.addedLabels.length > 0 ? (
-                                            <div className="schema-diff-line added">
-                                              <span className="schema-diff-prefix">
-                                                Adds:
-                                              </span>
-                                              <div className="schema-label-list">
-                                                {categoryDiff.addedLabels.map((label) => (
-                                                  <span
-                                                    key={`${group.signature}-${categoryDiff.name}-add-${label}`}
-                                                    className="schema-label-chip added"
-                                                  >
-                                                    {label}
-                                                  </span>
-                                                ))}
-                                              </div>
-                                            </div>
-                                          ) : null}
-                                          {categoryDiff.removedLabels.length > 0 ? (
-                                            <div className="schema-diff-line same">
-                                              <span className="schema-diff-prefix">
-                                                Keeps:
-                                              </span>
-                                              <div className="schema-label-list">
-                                                {categoryDiff.removedLabels.map((label) => (
-                                                  <span
-                                                    key={`${group.signature}-${categoryDiff.name}-remove-${label}`}
-                                                    className="schema-label-chip same"
-                                                  >
-                                                    {label}
-                                                  </span>
-                                                ))}
-                                              </div>
-                                            </div>
-                                          ) : null}
-                                          {!categoryDiff.addedLabels.length &&
-                                          !categoryDiff.removedLabels.length ? (
-                                            <div className="subtle">No label changes</div>
-                                          ) : null}
-                                        </div>
-                                      ) : (
-                                        <div
-                                          className={
-                                            status === "added"
-                                              ? "schema-diff-line added"
-                                              : "schema-diff-line same"
-                                          }
-                                        >
-                                          <div className="schema-label-list">
-                                            {categoryDiff.labels.length ? (
-                                              categoryDiff.labels.map((label) => (
-                                                <span
-                                                  key={`${group.signature}-${categoryDiff.name}-${status}-${label}`}
-                                                  className={`schema-label-chip ${categoryLabelTone}`}
-                                                >
-                                                  {label}
-                                                </span>
-                                              ))
-                                            ) : (
-                                              <span className="schema-label-chip empty">
-                                                No labels
-                                              </span>
-                                            )}
-                                          </div>
-                                        </div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="subtle">
-                        No reusable schemas found in other projects.
-                      </div>
-                    )}
-                  </div>
-                ) : null}
-                {!manageCollapsed
-                  ? categories.map((category) => (
-                      <div
-                        key={category.id}
-                        className={`manage-category${
-                          draggingCategoryId === category.id ? " dragging" : ""
-                        }${
-                          dragOverCategoryId === category.id ? " drag-over" : ""
-                        }`}
-                        onDragOver={handleCategoryDragOver}
-                        onDragEnter={() =>
-                          handleCategoryDragEnter(category.id)
-                        }
-                        onDrop={(event) =>
-                          handleCategoryDrop(event, category.id)
-                        }
-                      >
-                        <div
-                          className="manage-category-header"
-                          draggable
-                          onDragStart={(event) =>
-                            handleCategoryDragStart(event, category.id)
-                          }
-                          onDragEnd={handleCategoryDragEnd}
-                          title="Drag to reorder categories"
-                        >
-                          {editingCategoryId === category.id ? (
-                            <input
-                              className="label-inline-input"
-                              value={editingCategoryName}
-                              onChange={(event) =>
-                                setEditingCategoryName(event.target.value)
-                              }
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") {
-                                  event.preventDefault();
-                                  handleRenameCategory();
-                                }
-                                if (event.key === "Escape") {
-                                  setEditingCategoryId(null);
-                                  setEditingCategoryName("");
-                                }
-                              }}
-                            />
-                          ) : (
-                            <span className="label-name">{category.name}</span>
-                          )}
-                          <div className="label-actions">
-                            {editingCategoryId === category.id ? (
-                              <>
-                                <button
-                                  className="btn small"
-                                  onClick={handleRenameCategory}
-                                  type="button"
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  className="btn ghost small"
-                                  onClick={() => {
-                                    setEditingCategoryId(null);
-                                    setEditingCategoryName("");
-                                  }}
-                                  type="button"
-                                >
-                                  Cancel
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <button
-                                  className="btn ghost small"
-                                  onClick={() => {
-                                    setEditingCategoryId(category.id);
-                                    setEditingCategoryName(category.name);
-                                  }}
-                                  type="button"
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  className="btn ghost small"
-                                  onClick={() =>
-                                    handleDeleteCategory(category)
-                                  }
-                                  type="button"
-                                >
-                                  Remove
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="manage-label-add">
-                          <input
-                            className="label-input"
-                            value={newLabelByCategory[category.id] || ""}
-                            onChange={(event) =>
-                              setNewLabelByCategory((prev) => ({
-                                ...prev,
-                                [category.id]: event.target.value,
-                              }))
-                            }
-                            placeholder={`Add label to ${category.name}`}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                event.preventDefault();
-                                handleAddLabel(category.id);
-                              }
-                            }}
-                          />
-                          <button
-                            className="btn"
-                            onClick={() => handleAddLabel(category.id)}
-                            disabled={!newLabelByCategory[category.id]?.trim()}
-                            type="button"
-                          >
-                            Add Label
-                          </button>
-                        </div>
-
-                        <div className="manage-label-list">
-                          {category.labels.map((label) => (
-                            <div key={label.id} className="label-item">
-                              {editingLabelId === label.id ? (
-                                <input
-                                  className="label-inline-input"
-                                  value={editingLabelName}
-                                  onChange={(event) =>
-                                    setEditingLabelName(event.target.value)
-                                  }
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Enter") {
-                                      event.preventDefault();
-                                      handleRenameLabel();
-                                    }
-                                    if (event.key === "Escape") {
-                                      setEditingLabelId(null);
-                                      setEditingLabelName("");
-                                    }
-                                  }}
-                                />
-                              ) : (
-                                <span className="label-name">{label.name}</span>
-                              )}
-                              <div className="label-actions">
-                                {editingLabelId === label.id ? (
-                                  <>
-                                    <button
-                                      className="btn small"
-                                      onClick={handleRenameLabel}
-                                      type="button"
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      className="btn ghost small"
-                                      onClick={() => {
-                                        setEditingLabelId(null);
-                                        setEditingLabelName("");
-                                      }}
-                                      type="button"
-                                    >
-                                      Cancel
-                                    </button>
-                                  </>
-                                ) : (
-                                  <>
-                                    <button
-                                      className="btn ghost small"
-                                      onClick={() => {
-                                        setEditingLabelId(label.id);
-                                        setEditingLabelName(label.name);
-                                      }}
-                                      type="button"
-                                    >
-                                      Edit
-                                    </button>
-                                  </>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))
-                  : null}
-              </div>
-
-              <div className="export-panel">
-                <div className="export-projects">
-                  <div className="export-projects-header">
-                    <div className="section-title-row">
-                      <div className="section-title">Export Projects</div>
-                      <button
-                        className={`collapse-icon${
-                          exportProjectsCollapsed ? " collapsed" : ""
-                        }`}
-                        onClick={() =>
-                          setExportProjectsCollapsed((prev) => !prev)
-                        }
-                        type="button"
-                        aria-expanded={!exportProjectsCollapsed}
-                        aria-label={
-                          exportProjectsCollapsed
-                            ? "Expand export projects"
-                            : "Collapse export projects"
-                        }
-                        title={
-                          exportProjectsCollapsed
-                            ? "Expand export projects"
-                            : "Collapse export projects"
-                        }
-                      >
-                        ⌄
-                      </button>
-                    </div>
-                    <div className="label-actions">
-                      <button
-                        className="btn ghost small"
-                        onClick={selectAllExportProjects}
-                        type="button"
-                      >
-                        Select All
-                      </button>
-                      <button
-                        className="btn ghost small"
-                        onClick={useCurrentProjectForExport}
-                        type="button"
-                      >
-                        Use Current
-                      </button>
-                    </div>
-                  </div>
-                  {!exportProjectsCollapsed ? (
-                    <div className="export-project-list">
-                      {projects.map((project) => (
-                        <label
-                          key={project.id}
-                          className="checkbox export-project"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={exportProjectIds.has(project.id)}
-                            onChange={() => toggleExportProject(project.id)}
-                          />
-                          <span>{project.name}</span>
-                        </label>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="export-header">
-                  <div className="section-title-row">
-                    <div className="section-title">Export Selection</div>
-                    <button
-                      className={`collapse-icon${
-                        exportSelectionCollapsed ? " collapsed" : ""
-                      }`}
-                      onClick={() =>
-                        setExportSelectionCollapsed((prev) => !prev)
-                      }
-                      type="button"
-                      aria-expanded={!exportSelectionCollapsed}
-                      aria-label={
-                        exportSelectionCollapsed
-                          ? "Expand export selection"
-                          : "Collapse export selection"
-                      }
-                      title={
-                        exportSelectionCollapsed
-                          ? "Expand export selection"
-                          : "Collapse export selection"
-                      }
-                    >
-                      ⌄
-                    </button>
-                  </div>
-                  <div className="label-actions">
-                    <button
-                      className="btn ghost small"
-                      onClick={selectAllLabels}
-                      type="button"
-                    >
-                      Select All
-                    </button>
-                    <button
-                      className="btn ghost small"
-                      onClick={clearAllLabels}
-                      type="button"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-                {!exportSelectionCollapsed ? (
-                  <>
-                    <label className="checkbox export-toggle">
-                      <input
-                        type="checkbox"
-                        checked={exportOnlySelected}
-                        onChange={(event) =>
-                          setExportOnlySelected(event.target.checked)
-                        }
-                      />
-                      <span>Only export images that match selected labels</span>
-                    </label>
-                    <label className="checkbox export-toggle">
-                      <input
-                        type="checkbox"
-                        checked={filterUseExportSelection}
-                        onChange={(event) =>
-                          handleFilterUseExportSelection(event.target.checked)
-                        }
-                      />
-                      <span>Only show images that match selected labels</span>
-                    </label>
-                    {categories.map((category) => (
-                      <div key={category.id} className="export-category">
-                        <div className="export-category-name">
-                          {`${category.name} (${
-                            exportCounts.categoryCounts.get(category.name) || 0
-                          })`}
-                        </div>
-                        <div className="export-labels">
-                          {category.labels.map((label) => (
-                            <label key={label.id} className="checkbox">
-                              <input
-                                type="checkbox"
-                                checked={exportLabelKeys.has(
-                                  buildLabelKey(category.name, label.name)
-                                )}
-                                onChange={() =>
-                                  toggleLabelSelection(
-                                    buildLabelKey(category.name, label.name)
-                                  )
-                                }
-                              />
-                              <span>
-                                {`${label.name} (${
-                                  exportCounts.labelCounts.get(
-                                    buildLabelKey(category.name, label.name)
-                                  ) || 0
-                                })`}
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </>
-                ) : null}
-              </div>
             </>
           ) : (
             <div className="empty-viewer">

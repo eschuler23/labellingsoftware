@@ -414,6 +414,10 @@ body {
   margin: 0 auto;
 }
 
+.content.sidebar-collapsed {
+  grid-template-columns: 56px 1fr;
+}
+
 .card {
   background: var(--panel);
   border-radius: var(--radius);
@@ -425,9 +429,44 @@ body {
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
   max-height: calc(100vh - 160px);
-  overflow: hidden;
+  overflow-y: auto;
+  position: sticky;
+  top: 112px;
+}
+
+.sidebar.collapsed {
+  align-items: center;
+  padding: 12px;
+  overflow: visible;
+}
+
+.sidebar-collapse {
+  align-self: flex-end;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(31, 27, 22, 0.08);
+  border-radius: 10px;
+  background: rgba(31, 27, 22, 0.04);
+  color: var(--muted);
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.sidebar-collapse:hover,
+.sidebar-collapse:focus-visible {
+  border-color: rgba(249, 115, 22, 0.45);
+  color: var(--ink);
+}
+
+.sidebar.collapsed .sidebar-collapse {
+  align-self: center;
 }
 
 .sidebar-header {
@@ -435,6 +474,131 @@ body {
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
+}
+
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid rgba(234, 223, 206, 0.8);
+}
+
+.sidebar-section:first-of-type {
+  border-top: none;
+}
+
+.sidebar-section summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  cursor: pointer;
+}
+
+.sidebar-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.sidebar-section summary::after {
+  content: "⌄";
+  color: var(--muted);
+  font-size: 14px;
+  transition: transform 0.2s ease;
+}
+
+.sidebar-section:not([open]) summary::after {
+  transform: rotate(-90deg);
+}
+
+.sidebar-section > :not(summary) {
+  margin-top: 10px;
+}
+
+.sidebar-tabs,
+.sidebar-actions,
+.filter-sidebar-stack {
+  width: 100%;
+}
+
+.sidebar-tabs {
+  display: flex;
+  align-items: stretch;
+}
+
+.sidebar-tabs .page-tab {
+  flex: 1;
+  white-space: normal;
+}
+
+.sidebar-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.sidebar-actions .btn,
+.sidebar-search .btn {
+  justify-content: center;
+}
+
+.sidebar-search {
+  width: 100%;
+  min-width: 0;
+  flex: none;
+}
+
+.sidebar-search .filename-search-results,
+.sidebar-dropdown {
+  position: static;
+  width: 100%;
+  max-height: none;
+  margin-top: 8px;
+  box-shadow: none;
+}
+
+.filter-sidebar-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filter-sidebar-stack .filter-trigger,
+.filter-sidebar-stack .unlabeled-trigger {
+  width: 100%;
+  justify-content: center;
+}
+
+.sidebar-label-add {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-label-add .label-input,
+.sidebar-label-add .btn {
+  width: 100%;
+}
+
+.sidebar-manage {
+  padding-top: 0;
+  border-top: none;
+}
+
+.sidebar-export-panel {
+  padding-top: 0;
+  border-top: none;
+}
+
+.sidebar-export-panel > .btn {
+  width: 100%;
+  justify-content: center;
 }
 
 .section-title {
@@ -598,7 +762,8 @@ body {
 }
 
 .image-shell {
-  min-height: 420px;
+  height: clamp(320px, 52vh, 640px);
+  min-height: 0;
   border-radius: 16px;
   border: 1px solid rgba(234, 223, 206, 0.9);
   background: #faf6ef;
@@ -609,8 +774,10 @@ body {
 }
 
 .image-shell img {
-  max-height: 55vh;
-  max-width: 100%;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
   object-fit: contain;
   border-radius: 12px;
   box-shadow: 0 12px 30px rgba(31, 27, 22, 0.12);
@@ -1972,12 +2139,18 @@ body {
 }
 
 @media (max-width: 1024px) {
-  .content {
+  .content,
+  .content.sidebar-collapsed {
     grid-template-columns: 1fr;
   }
 
   .sidebar {
     max-height: unset;
+    position: static;
+  }
+
+  .sidebar.collapsed {
+    align-items: flex-start;
   }
 
   .mapping-hero,
@@ -2034,6 +2207,11 @@ body {
 
   .content {
     padding: 20px;
+  }
+
+  .image-shell {
+    height: clamp(240px, 46vh, 420px);
+    padding: 10px;
   }
 
   .modal-backdrop {
